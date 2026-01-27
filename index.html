@@ -6,7 +6,10 @@
     <title>Gene Coverage Analyzer</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <link rel="stylesheet" href="styles.css">
 </head>
@@ -37,8 +40,9 @@
                 </div>
                 
                 <div id="pasteTab" class="tab-content">
-                    <textarea id="geneList" placeholder="Paste gene names here (one per line)&#10;Example:&#10;BRCA1&#10;BRCA2&#10;TP53"></textarea>
-                    <button onclick="loadGeneList()" class="btn-secondary">Load Gene List</button>
+                    <textarea id="geneList" placeholder="Paste gene names here (one per line)&#10;Example:&#10;BRCA1&#10;BRCA2&#10;TP53&#10;EGFR&#10;KRAS"></textarea>
+                    <button onclick="loadGeneList()" class="btn-secondary" style="margin-top: 10px; width: 100%;">Load Gene List</button>
+                    <div id="geneListStatus" class="status"></div>
                 </div>
             </div>
         </div>
@@ -70,6 +74,6 @@
         </footer>
     </div>
 
-    <script src="app-fixed.js"></script>
+    <script src="app.js"></script>
 </body>
 </html>
