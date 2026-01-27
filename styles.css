@@ -20,6 +20,26 @@ body {
     overflow: hidden;
 }
 
+.loading-banner {
+    background: #fff3cd;
+    color: #856404;
+    padding: 12px 20px;
+    text-align: center;
+    border-bottom: 1px solid #ffeaa7;
+    font-weight: 500;
+    display: block;
+    animation: fadeIn 0.3s;
+}
+
+.loading-banner.hidden {
+    display: none;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
 header {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
