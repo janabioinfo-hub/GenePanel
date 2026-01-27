@@ -129,10 +129,14 @@ function handlePanelUpload(event) {
 
 function switchTab(tabName) {
     // Update tab buttons
-    document.querySelectorAll('.tab-button').forEach(btn => {
+    const buttons = document.querySelectorAll('.tab-button');
+    buttons.forEach(btn => {
         btn.classList.remove('active');
+        if ((tabName === 'upload' && btn.textContent.includes('Upload')) ||
+            (tabName === 'paste' && btn.textContent.includes('Paste'))) {
+            btn.classList.add('active');
+        }
     });
-    event.target.classList.add('active');
 
     // Update tab content
     document.querySelectorAll('.tab-content').forEach(content => {
@@ -161,7 +165,7 @@ function loadGeneList() {
     // Remove duplicates
     panelGenes = [...new Set(panelGenes)];
 
-    const statusDiv = document.getElementById('panelStatus');
+    const statusDiv = document.getElementById('geneListStatus');
     statusDiv.textContent = `✓ Loaded ${panelGenes.length} genes from list`;
     statusDiv.className = 'status success';
     statusDiv.style.display = 'block';
