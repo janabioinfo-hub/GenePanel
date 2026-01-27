@@ -7,28 +7,60 @@ let filteredData = [];
 let librariesLoaded = false;
 
 window.addEventListener('load', function() {
-    // Give libraries time to initialize
-    setTimeout(function() {
-        if (typeof docx !== 'undefined' && typeof Papa !== 'undefined' && 
-            typeof XLSX !== 'undefined' && typeof saveAs !== 'undefined') {
-            librariesLoaded = true;
-            console.log('All libraries loaded successfully');
-        } else {
-            console.error('Library loading status:', {
-                docx: typeof docx !== 'undefined',
-                Papa: typeof Papa !== 'undefined', 
-                XLSX: typeof XLSX !== 'undefined',
-                saveAs: typeof saveAs !== 'undefined'
-            });
-            alert('Some libraries failed to load. Please refresh the page.');
-        }
-    }, 1000);
+    // Check immediately
+    checkLibraries();
+    
+    // Also check after a delay as backup
+    setTimeout(checkLibraries, 500);
+    setTimeout(checkLibraries, 1500);
+    setTimeout(checkLibraries, 3000);
 });
+
+function checkLibraries() {
+    if (typeof docx !== 'undefined' && typeof Papa !== 'undefined' && 
+        typeof XLSX !== 'undefined' && typeof saveAs !== 'undefined') {
+        librariesLoaded = true;
+        console.log('✓ All libraries loaded successfully');
+        
+        // Hide loading banner
+        const banner = document.getElementById('loadingBanner');
+        if (banner) {
+            banner.style.background = '#d4edda';
+            banner.style.color = '#155724';
+            banner.innerHTML = '✓ Ready! You can now upload your files.';
+            setTimeout(() => {
+                banner.classList.add('hidden');
+            }, 2000);
+        }
+        
+        // Update button text to show ready
+        const btnText = document.getElementById('btnText');
+        if (btnText && btnText.textContent.includes('Loading')) {
+            btnText.textContent = 'Generate Word Document';
+        }
+        
+        // Enable the generate button if data is ready
+        if (filteredData && filteredData.length > 0) {
+            document.getElementById('processBtn').disabled = false;
+        }
+    }
+}
 
 // File upload handlers
 document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('coverageFile').addEventListener('change', handleCoverageUpload);
     document.getElementById('panelFile').addEventListener('change', handlePanelUpload);
+    
+    // Show loading state on button initially
+    const btnText = document.getElementById('btnText');
+    if (btnText && !librariesLoaded) {
+        btnText.textContent = 'Loading libraries...';
+        setTimeout(() => {
+            if (librariesLoaded && btnText.textContent.includes('Loading')) {
+                btnText.textContent = 'Generate Word Document';
+            }
+        }, 2000);
+    }
 });
 
 function handleCoverageUpload(event) {
@@ -247,7 +279,28 @@ async function processData() {
     }
 
     if (!librariesLoaded) {
-        alert('Libraries are still loading. Please wait a moment and try again.');
+        // Auto-retry after a short delay instead of blocking with alert
+        const progressSection = document.getElementById('progressSection');
+        const progressText = document.getElementById('progressText');
+        progressSection.style.display = 'block';
+        progressText.textContent = 'Loading libraries... please wait';
+        
+        setTimeout(() => {
+            if (librariesLoaded) {
+                processData(); // Retry
+            } else {
+                progressText.textContent = 'Libraries still loading. Retrying...';
+                setTimeout(() => {
+                    checkLibraries();
+                    if (librariesLoaded) {
+                        processData(); // Retry again
+                    } else {
+                        progressSection.style.display = 'none';
+                        alert('Libraries are taking too long to load. Please refresh the page and wait 5 seconds before clicking Generate.');
+                    }
+                }, 2000);
+            }
+        }, 1000);
         return;
     }
 
