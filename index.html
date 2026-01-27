@@ -15,6 +15,10 @@
 </head>
 <body>
     <div class="container">
+        <div id="loadingBanner" class="loading-banner">
+            ⏳ Loading libraries... Please wait a moment before using the app.
+        </div>
+        
         <header>
             <h1>Gene Coverage Analyzer</h1>
             <p class="subtitle">Upload coverage data and panel file to generate Word report</p>
@@ -55,7 +59,7 @@
 
         <div class="action-section">
             <button id="processBtn" onclick="processData()" disabled class="btn-primary">
-                Generate Word Document
+                <span id="btnText">Generate Word Document</span>
             </button>
             <button id="downloadCsvBtn" onclick="downloadCSV()" disabled class="btn-secondary">
                 Download CSV
