@@ -3,9 +3,33 @@ let coverageData = null;
 let panelGenes = [];
 let filteredData = [];
 
+// Wait for all libraries to load
+let librariesLoaded = false;
+
+window.addEventListener('load', function() {
+    // Give libraries time to initialize
+    setTimeout(function() {
+        if (typeof docx !== 'undefined' && typeof Papa !== 'undefined' && 
+            typeof XLSX !== 'undefined' && typeof saveAs !== 'undefined') {
+            librariesLoaded = true;
+            console.log('All libraries loaded successfully');
+        } else {
+            console.error('Library loading status:', {
+                docx: typeof docx !== 'undefined',
+                Papa: typeof Papa !== 'undefined', 
+                XLSX: typeof XLSX !== 'undefined',
+                saveAs: typeof saveAs !== 'undefined'
+            });
+            alert('Some libraries failed to load. Please refresh the page.');
+        }
+    }, 1000);
+});
+
 // File upload handlers
-document.getElementById('coverageFile').addEventListener('change', handleCoverageUpload);
-document.getElementById('panelFile').addEventListener('change', handlePanelUpload);
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('coverageFile').addEventListener('change', handleCoverageUpload);
+    document.getElementById('panelFile').addEventListener('change', handlePanelUpload);
+});
 
 function handleCoverageUpload(event) {
     const file = event.target.files[0];
@@ -218,6 +242,11 @@ async function processData() {
         return;
     }
 
+    if (!librariesLoaded) {
+        alert('Libraries are still loading. Please wait a moment and try again.');
+        return;
+    }
+
     // Show progress
     const progressSection = document.getElementById('progressSection');
     const progressFill = document.getElementById('progressFill');
@@ -238,35 +267,47 @@ async function processData() {
             progressFill.style.width = '0%';
         }, 2000);
     } catch (error) {
+        console.error('Document generation error:', error);
         progressText.textContent = `✗ Error: ${error.message}`;
         progressFill.style.width = '0%';
+        
+        // Show more detailed error
+        setTimeout(() => {
+            alert('Error generating document. Please:\n1. Refresh the page\n2. Try again\n3. Check browser console (F12) for details');
+        }, 1000);
     }
 }
 
 async function generateWordDocument() {
+    // Check if docx library is available
+    if (typeof docx === 'undefined') {
+        throw new Error('Word library not loaded. Please refresh the page.');
+    }
+
     const { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, 
             WidthType, AlignmentType, VerticalAlign, BorderStyle, HeadingLevel } = docx;
 
-    // Create document
-    const doc = new Document({
-        sections: [{
-            properties: {},
-            children: [
-                new Paragraph({
-                    text: "Appendix 1: Gene Coverage",
-                    heading: HeadingLevel.HEADING_1,
-                }),
-                new Paragraph({
-                    text: "Indication Based Analysis:",
-                    heading: HeadingLevel.HEADING_2,
-                }),
-                new Paragraph({ text: "" }), // Spacer
-                createCoverageTable(filteredData)
-            ]
-        }]
-    });
+    // Create document sections
+    const sections = [{
+        properties: {},
+        children: [
+            new Paragraph({
+                text: "Appendix 1: Gene Coverage",
+                heading: HeadingLevel.HEADING_1,
+            }),
+            new Paragraph({
+                text: "Indication Based Analysis:",
+                heading: HeadingLevel.HEADING_2,
+            }),
+            new Paragraph({ text: "" }), // Spacer
+            createCoverageTable(filteredData)
+        ]
+    }];
 
-    // Generate and download
+    // Create document
+    const doc = new Document({ sections });
+
+    // Generate blob and download
     const blob = await Packer.toBlob(doc);
     saveAs(blob, "gene_coverage_report.docx");
 }
