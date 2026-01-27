@@ -137,19 +137,20 @@ input[type="file"]:hover {
 
 textarea {
     width: 100%;
-    min-height: 150px;
+    min-height: 200px;
     padding: 12px;
-    border: 1px solid #ced4da;
+    border: 2px solid #667eea;
     border-radius: 5px;
     font-family: 'Courier New', monospace;
     font-size: 0.9em;
     resize: vertical;
+    background: white;
 }
 
 textarea:focus {
     outline: none;
-    border-color: #667eea;
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    border-color: #764ba2;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
 }
 
 .preview-section {
