@@ -1,14 +1,47 @@
 import streamlit as st
 import pandas as pd
 from docx import Document
-from docx.shared import RGBColor, Pt, Inches
+from docx.shared import RGBColor, Pt
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 import io
 import os
+import re
 
+# Page config MUST be first
+st.set_page_config(
+    page_title="Gene Coverage Analyzer",
+    page_icon="🧬",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Minimal CSS - only essential styles
+st.markdown("""
+    <style>
+    .stButton>button {
+        width: 100%;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Initialize session state ONCE
+if 'coverage_data' not in st.session_state:
+    st.session_state.coverage_data = None
+if 'panel_genes' not in st.session_state:
+    st.session_state.panel_genes = []
+if 'filtered_data' not in st.session_state:
+    st.session_state.filtered_data = None
+if 'processed_csv' not in st.session_state:
+    st.session_state.processed_csv = None
+if 'file_basename' not in st.session_state:
+    st.session_state.file_basename = "output"
+if 'last_processed_file' not in st.session_state:
+    st.session_state.last_processed_file = None
+
+@st.cache_data
 def extract_gene_name(name):
     """Extract the first gene name from comma or semicolon-separated names."""
     if isinstance(name, str):
@@ -16,37 +49,50 @@ def extract_gene_name(name):
             return name.split(',')[0]
         elif ';' in name:
             return name.split(';')[0]
-        else:
-            return name
-    else:
-        return None
+        return name
+    return None
 
-def preprocess_excel(file_data, file_name, skip_rows=1):
-    """Preprocesses raw Excel file to calculate coverage statistics."""
+def parse_gene_list(text):
+    """Parse gene list with support for newlines, commas, and spaces. Remove duplicates."""
+    if not text.strip():
+        return []
+    
+    # Replace newlines and commas with spaces
+    text = text.replace('\n', ' ').replace(',', ' ').replace('\t', ' ')
+    
+    # Split by whitespace and filter empty strings
+    genes = [gene.strip() for gene in text.split() if gene.strip()]
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_genes = []
+    for gene in genes:
+        if gene not in seen:
+            seen.add(gene)
+            unique_genes.append(gene)
+    
+    return unique_genes
+
+@st.cache_data(show_spinner=False)
+def preprocess_excel_cached(file_bytes, file_name, skip_rows=1):
+    """Cached preprocessing to avoid re-computation"""
     try:
-        # Load Excel data
-        data = pd.read_excel(file_data, skiprows=skip_rows)
+        data = pd.read_excel(io.BytesIO(file_bytes), skiprows=skip_rows)
         
         if 'Gene Name' not in data.columns:
-            raise ValueError("The column 'Gene Name' is not found in the file.")
+            raise ValueError("Column 'Gene Name' not found")
         
-        # Extract gene names
         data['Gene_Name'] = data['Gene Name'].apply(extract_gene_name)
         
-        # Calculate coverage statistics
         result = []
         identifiers = data[['Gene Names', 'Aliases', 'Gene_Name']].fillna('')
         unique_ids = identifiers.drop_duplicates()
         
-        total_genes = len(unique_ids)
-        
-        for idx, row in enumerate(unique_ids.iterrows()):
-            _, row = row  # Unpack the tuple
+        for _, row in unique_ids.iterrows():
             gene = row['Gene Names']
             alias = row['Aliases']
             name = row['Gene_Name']
             
-            # Select matching rows
             if gene:
                 gene_data = data[data['Gene Names'] == gene]
             elif alias:
@@ -56,26 +102,12 @@ def preprocess_excel(file_data, file_name, skip_rows=1):
             else:
                 continue
             
-            # Total bases
             total_counted_bases = gene_data['Counted Bases'].sum()
-            
             if total_counted_bases == 0:
                 continue
             
-            # Weighted mean depth
-            mean_depth = (
-                (gene_data['Mean Depth'] * gene_data['Counted Bases']).sum()
-                / total_counted_bases
-            )
-            
-            # Weighted %1x
-            mean_1x = (
-                (gene_data['% 1x'] * gene_data['Counted Bases']).sum()
-                / total_counted_bases
-            )
-            
-            min_depth = gene_data['Min Depth'].min()
-            max_depth = gene_data['Max Depth'].max()
+            mean_depth = (gene_data['Mean Depth'] * gene_data['Counted Bases']).sum() / total_counted_bases
+            mean_1x = (gene_data['% 1x'] * gene_data['Counted Bases']).sum() / total_counted_bases
             
             summary = {
                 'Region': 'total',
@@ -86,22 +118,18 @@ def preprocess_excel(file_data, file_name, skip_rows=1):
                 'Gene IDs': gene_data['Gene IDs'].iloc[0] if 'Gene IDs' in gene_data.columns else None,
                 'Counted Bases': total_counted_bases,
                 'Mean Depth': mean_depth,
-                'Min Depth': min_depth,
-                'Max Depth': max_depth,
+                'Min Depth': gene_data['Min Depth'].min(),
+                'Max Depth': gene_data['Max Depth'].max(),
                 '% 1x': mean_1x,
             }
-            
-            result.append(pd.DataFrame([summary]))
+            result.append(summary)
         
-        coverage_df = pd.concat(result, ignore_index=True)
-        
-        # Store the base filename without extension
+        coverage_df = pd.DataFrame(result)
         base_name = os.path.splitext(file_name)[0]
         
         return coverage_df, base_name
-        
     except Exception as e:
-        raise Exception(f"Error preprocessing Excel file: {str(e)}")
+        raise Exception(f"Error: {str(e)}")
 
 def create_word_document(df_grouped, output_filename):
     """Create Word document with gene coverage table"""
@@ -109,10 +137,8 @@ def create_word_document(df_grouped, output_filename):
     doc.add_heading('Appendix 1: Gene Coverage', 1)
     doc.add_heading('Indication Based Analysis:', 2)
     
-    # Add spacing paragraph with 0pt after
     spacer = doc.add_paragraph()
-    spacer_format = spacer.paragraph_format
-    spacer_format.space_after = Pt(0)
+    spacer.paragraph_format.space_after = Pt(0)
     
     chunk_size = 4
     chunks = [df_grouped[i:i+chunk_size] for i in range(0, len(df_grouped), chunk_size)]
@@ -121,9 +147,7 @@ def create_word_document(df_grouped, output_filename):
     table.alignment = 1
     hdr_cells = table.rows[0].cells
     
-    # Header row
     for i in range(chunk_size):
-        # Gene Name header
         gene_hdr_cell = hdr_cells[i*2]
         gene_hdr_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
         gene_hdr_para = gene_hdr_cell.paragraphs[0]
@@ -134,7 +158,6 @@ def create_word_document(df_grouped, output_filename):
         gene_hdr_run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
         gene_hdr_run.font.size = Pt(8)
         
-        # Coverage header
         perc_hdr_cell = hdr_cells[i*2+1]
         perc_hdr_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
         perc_hdr_para = perc_hdr_cell.paragraphs[0]
@@ -145,7 +168,6 @@ def create_word_document(df_grouped, output_filename):
         perc_hdr_run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
         perc_hdr_run.font.size = Pt(8)
     
-    # Data rows
     for chunk in chunks:
         row_cells = table.add_row().cells
         for i in range(chunk_size):
@@ -153,9 +175,7 @@ def create_word_document(df_grouped, output_filename):
                 row = chunk.iloc[i]
                 gene = str(row['Gene_ID'])
                 percent = row['Perc_1x']
-                percent_str = str(percent)
                 
-                # Gene cell
                 gene_cell = row_cells[i*2]
                 gene_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
                 gene_para = gene_cell.paragraphs[0]
@@ -169,20 +189,18 @@ def create_word_document(df_grouped, output_filename):
                 if percent < 90:
                     gene_run.font.color.rgb = RGBColor(255, 0, 0)
                 
-                # Percentage cell
                 perc_cell = row_cells[i*2+1]
                 perc_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
                 perc_para = perc_cell.paragraphs[0]
                 perc_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
                 perc_para.paragraph_format.space_after = Pt(0)
-                perc_run = perc_para.add_run(percent_str)
+                perc_run = perc_para.add_run(str(percent))
                 perc_run.font.name = 'Calibri'
                 perc_run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
                 perc_run.font.size = Pt(8)
                 if percent < 90:
                     perc_run.font.color.rgb = RGBColor(255, 0, 0)
             else:
-                # Empty cells
                 for empty_cell in [row_cells[i*2], row_cells[i*2+1]]:
                     empty_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
                     para = empty_cell.paragraphs[0]
@@ -194,7 +212,6 @@ def create_word_document(df_grouped, output_filename):
                     run.font.size = Pt(8)
                     run.font.color.rgb = RGBColor(255, 255, 255)
     
-    # Add table borders
     tbl = table._tbl
     tblPr = tbl.tblPr
     if tblPr is None:
@@ -212,336 +229,161 @@ def create_word_document(df_grouped, output_filename):
     
     return doc
 
-st.set_page_config(
-    page_title="Gene Coverage Analyzer",
-    page_icon="🧬",
-    layout="wide"
-)
-
-# Custom CSS
-st.markdown("""
-    <style>
-    .main {
-        padding: 2rem;
-    }
-    .stButton>button {
-        width: 100%;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border: none;
-        padding: 0.75rem 1.5rem;
-        font-size: 1.1rem;
-        border-radius: 8px;
-        font-weight: 600;
-    }
-    .stButton>button:hover {
-        background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
-    }
-    .upload-box {
-        background: #f8f9fa;
-        padding: 1.5rem;
-        border-radius: 10px;
-        border: 2px dashed #dee2e6;
-    }
-    .success-box {
-        background: #d4edda;
-        color: #155724;
-        padding: 1rem;
-        border-radius: 5px;
-        border: 1px solid #c3e6cb;
-        margin: 1rem 0;
-    }
-    .gene-preview {
-        background: white;
-        padding: 1rem;
-        border-radius: 8px;
-        border: 1px solid #dee2e6;
-        max-height: 300px;
-        overflow-y: auto;
-    }
-    .gene-badge {
-        display: inline-block;
-        padding: 0.3rem 0.6rem;
-        margin: 0.2rem;
-        background: #e9ecef;
-        border-radius: 4px;
-        font-family: monospace;
-        font-size: 0.9rem;
-    }
-    .gene-badge-low {
-        background: #f8d7da;
-        color: #721c24;
-        font-weight: bold;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
-# Title
+# Main UI
 st.title("🧬 Gene Coverage Analyzer")
-st.markdown("Process raw Excel data or upload pre-processed CSV to generate Word report")
+st.caption("Process raw Excel data or upload pre-processed CSV to generate Word report")
 
-# Initialize session state
-if 'coverage_data' not in st.session_state:
-    st.session_state.coverage_data = None
-if 'panel_genes' not in st.session_state:
-    st.session_state.panel_genes = []
-if 'filtered_data' not in st.session_state:
-    st.session_state.filtered_data = None
-if 'processed_csv' not in st.session_state:
-    st.session_state.processed_csv = None
-if 'file_basename' not in st.session_state:
-    st.session_state.file_basename = "output"
-
-# Step 1: Choose input type
-st.markdown("### Step 1: Choose Input Type")
+# Step 1
 input_type = st.radio(
-    "Select your input format:",
-    ["📊 Pre-processed CSV (Skip preprocessing)", "📁 Raw Excel File (Run preprocessing first)"],
-    help="Choose whether you already have a processed CSV or need to process raw Excel data first"
+    "**Step 1: Choose Input Type**",
+    ["📊 Pre-processed CSV", "📁 Raw Excel File"],
+    horizontal=True
 )
 
-# Create two columns for upload
+# Step 2
 col1, col2 = st.columns(2)
 
 with col1:
     if "Raw Excel" in input_type:
-        st.markdown("### Step 2A: Upload Raw Excel File")
-        raw_excel = st.file_uploader(
-            "Choose Raw Excel file",
-            type=['xlsx', 'xls'],
-            key='raw_excel',
-            help="Upload the raw coverage Excel file for preprocessing"
-        )
+        st.subheader("Step 2A: Upload Raw Excel")
+        raw_excel = st.file_uploader("Choose Excel file", type=['xlsx', 'xls'], key='raw_excel')
         
         if raw_excel:
-            # Check if this file has already been processed
             file_id = f"{raw_excel.name}_{raw_excel.size}"
             
-            if 'last_processed_file' not in st.session_state:
-                st.session_state.last_processed_file = None
-            
-            # Only process if it's a new file
             if st.session_state.last_processed_file != file_id:
-                # Create progress indicators
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+                progress = st.progress(0, "Reading file...")
                 
                 try:
-                    # Step 1: Reading Excel file
-                    status_text.text("📂 Reading Excel file...")
-                    progress_bar.progress(20)
+                    progress.progress(30, "Processing...")
+                    file_bytes = raw_excel.read()
+                    coverage_df, basename = preprocess_excel_cached(file_bytes, raw_excel.name)
                     
-                    coverage_df, basename = preprocess_excel(raw_excel, raw_excel.name)
-                    
-                    # Step 2: Processing complete
-                    status_text.text("⚙️ Calculating coverage statistics...")
-                    progress_bar.progress(70)
-                    
+                    progress.progress(80, "Generating CSV...")
                     st.session_state.coverage_data = coverage_df
                     st.session_state.file_basename = basename
-                    
-                    # Step 3: Generating CSV
-                    status_text.text("📄 Generating CSV output...")
-                    progress_bar.progress(90)
-                    
-                    csv_buffer = io.StringIO()
-                    coverage_df.to_csv(csv_buffer, index=False)
-                    st.session_state.processed_csv = csv_buffer.getvalue()
-                    
-                    # Mark this file as processed
+                    st.session_state.processed_csv = coverage_df.to_csv(index=False)
                     st.session_state.last_processed_file = file_id
                     
-                    # Complete
-                    progress_bar.progress(100)
-                    status_text.text("✅ Processing complete!")
-                    
-                    # Clear progress indicators after a moment
-                    import time
-                    time.sleep(0.5)
-                    progress_bar.empty()
-                    status_text.empty()
-                    
+                    progress.progress(100, "Complete!")
+                    progress.empty()
                 except Exception as e:
-                    if 'progress_bar' in locals():
-                        progress_bar.empty()
-                    if 'status_text' in locals():
-                        status_text.empty()
-                    st.error(f"❌ Error processing Excel: {str(e)}")
+                    progress.empty()
+                    st.error(f"❌ {str(e)}")
             
-            # Always show success message and download button if data exists
             if st.session_state.processed_csv:
-                st.success(f"✅ Processed {len(st.session_state.coverage_data)} gene records from {raw_excel.name}")
-                
-                # Download button for processed CSV
+                st.success(f"✅ {len(st.session_state.coverage_data)} records")
                 st.download_button(
-                    label="⬇️ Download Processed CSV",
+                    "⬇️ Download CSV",
                     data=st.session_state.processed_csv,
-                    file_name=f"{st.session_state.file_basename}_total_coverage_statistics.csv",
+                    file_name=f"{st.session_state.file_basename}_coverage.csv",
                     mime="text/csv",
                     use_container_width=True
                 )
     else:
-        st.markdown("### Step 2A: Upload Coverage CSV")
-        coverage_file = st.file_uploader(
-            "Choose CSV file",
-            type=['csv'],
-            key='coverage',
-            help="Must contain columns: Gene_Name, Ref Name, and % 1x (or %1x)"
-        )
+        st.subheader("Step 2A: Upload CSV")
+        coverage_file = st.file_uploader("Choose CSV file", type=['csv'], key='coverage')
         
         if coverage_file:
-            try:
-                # Extract filename without extension
-                st.session_state.file_basename = os.path.splitext(coverage_file.name)[0]
-                
-                df = pd.read_csv(coverage_file)
-                df.columns = df.columns.str.strip()
-                
-                # Find coverage column
-                if '% 1x' in df.columns:
-                    coverage_col = '% 1x'
-                elif '%1x' in df.columns:
-                    coverage_col = '%1x'
-                elif '% 1x ' in df.columns:
-                    coverage_col = '% 1x '
-                else:
-                    st.error("❌ No '% 1x' or '%1x' column found in CSV")
-                    coverage_col = None
-                
-                if coverage_col:
-                    st.session_state.coverage_data = df
-                    st.success(f"✅ Loaded {len(df)} coverage records from {coverage_file.name}")
-            except Exception as e:
-                st.error(f"❌ Error reading CSV: {str(e)}")
+            st.session_state.file_basename = os.path.splitext(coverage_file.name)[0]
+            df = pd.read_csv(coverage_file)
+            df.columns = df.columns.str.strip()
+            
+            coverage_col = next((col for col in ['% 1x', '%1x', '% 1x '] if col in df.columns), None)
+            
+            if coverage_col:
+                st.session_state.coverage_data = df
+                st.success(f"✅ {len(df)} records")
+            else:
+                st.error("❌ No coverage column found")
 
 with col2:
-    st.markdown("### Step 2B: Upload Panel Excel OR Paste Gene List")
-    
-    # Tab selection
-    tab1, tab2 = st.tabs(["📁 Upload Excel", "📝 Paste Genes"])
+    st.subheader("Step 2B: Panel Genes")
+    tab1, tab2 = st.tabs(["📁 Excel", "📝 Paste"])
     
     with tab1:
-        panel_file = st.file_uploader(
-            "Choose Excel file",
-            type=['xlsx', 'xls'],
-            key='panel',
-            help="Must contain a 'GENE' column"
-        )
-        
+        panel_file = st.file_uploader("Choose Excel", type=['xlsx', 'xls'], key='panel')
         if panel_file:
-            try:
-                panel_df = pd.read_excel(panel_file)
-                if 'GENE' in panel_df.columns:
-                    genes = panel_df['GENE'].dropna().unique().tolist()
-                    st.session_state.panel_genes = genes
-                    st.success(f"✅ Loaded {len(genes)} genes from panel")
-                else:
-                    st.error("❌ No 'GENE' column found in Excel file")
-            except Exception as e:
-                st.error(f"❌ Error reading Excel: {str(e)}")
+            panel_df = pd.read_excel(panel_file)
+            if 'GENE' in panel_df.columns:
+                genes = panel_df['GENE'].dropna().unique().tolist()
+                st.session_state.panel_genes = genes
+                st.success(f"✅ {len(genes)} genes")
+            else:
+                st.error("❌ No GENE column")
     
     with tab2:
         gene_text = st.text_area(
-            "Paste gene names (one per line)",
-            height=200,
-            placeholder="BRCA1\nBRCA2\nTP53\nEGFR\nKRAS",
-            help="Enter one gene name per line"
+            "Paste genes (newline, comma, or space separated)",
+            height=150,
+            placeholder="BRCA1 BRCA2 TP53\nEGFR, KRAS\nTP53"
         )
         
-        if st.button("Load Gene List"):
-            if gene_text.strip():
-                genes = [gene.strip() for gene in gene_text.split('\n') if gene.strip()]
-                genes = list(set(genes))  # Remove duplicates
+        if st.button("Load Genes", use_container_width=True):
+            genes = parse_gene_list(gene_text)
+            if genes:
                 st.session_state.panel_genes = genes
-                st.success(f"✅ Loaded {len(genes)} genes from list")
+                duplicates_removed = len(gene_text.split()) - len(genes)
+                if duplicates_removed > 0:
+                    st.success(f"✅ {len(genes)} unique genes ({duplicates_removed} duplicates removed)")
+                else:
+                    st.success(f"✅ {len(genes)} genes")
             else:
-                st.warning("⚠️ Please paste gene names first")
+                st.warning("⚠️ No genes found")
 
-# Process data if both are available
+# Process data
 if st.session_state.coverage_data is not None and st.session_state.panel_genes:
     df = st.session_state.coverage_data
     panel_genes = st.session_state.panel_genes
     
-    # Find coverage column
-    if '% 1x' in df.columns:
-        coverage_col = '% 1x'
-    elif '%1x' in df.columns:
-        coverage_col = '%1x'
-    elif '% 1x ' in df.columns:
-        coverage_col = '% 1x '
-    else:
+    coverage_col = next((col for col in ['% 1x', '%1x', '% 1x '] if col in df.columns), None)
+    if not coverage_col:
         st.error("Coverage column not found")
         st.stop()
     
-    # Filter data
-    df_filtered = df[
-        df['Gene_Name'].isin(panel_genes) | 
-        df['Ref Name'].isin(panel_genes)
-    ].copy()
-    
-    # Use Gene_Name if present, otherwise Ref Name
-    df_filtered['Gene_ID'] = df_filtered['Gene_Name']
-    df_filtered.loc[df_filtered['Gene_ID'].isna(), 'Gene_ID'] = df_filtered['Ref Name']
-    
-    # Remove rows starting with "Intron:"
+    df_filtered = df[df['Gene_Name'].isin(panel_genes) | df['Ref Name'].isin(panel_genes)].copy()
+    df_filtered['Gene_ID'] = df_filtered['Gene_Name'].fillna(df_filtered['Ref Name'])
     df_filtered = df_filtered[~df_filtered['Gene_ID'].fillna('').str.startswith("Intron:")]
-    
-    # Convert coverage to numeric
     df_filtered['Perc_1x'] = pd.to_numeric(df_filtered[coverage_col], errors='coerce')
     
-    # Group by Gene_ID and take average
     df_grouped = df_filtered.groupby('Gene_ID', as_index=False)['Perc_1x'].mean()
     df_grouped['Perc_1x'] = df_grouped['Perc_1x'].round(2)
     df_grouped = df_grouped.sort_values('Gene_ID')
     
     st.session_state.filtered_data = df_grouped
     
-    # Display preview
-    st.markdown("---")
+    st.divider()
     
-    # Summary stats
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Total Genes", len(df_grouped))
     with col2:
-        low_coverage = len(df_grouped[df_grouped['Perc_1x'] < 90])
-        st.metric("Low Coverage (<90%)", low_coverage)
+        st.metric("Low Coverage", len(df_grouped[df_grouped['Perc_1x'] < 90]))
     with col3:
-        avg_coverage = df_grouped['Perc_1x'].mean()
-        st.metric("Average Coverage", f"{avg_coverage:.2f}%")
+        st.metric("Avg Coverage", f"{df_grouped['Perc_1x'].mean():.2f}%")
     
-    st.markdown("---")
-    st.markdown("### 📥 Download Results")
+    st.divider()
     
-    # Action buttons - prominently placed
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("📄 Generate Word Document", type="primary", use_container_width=True, key="gen_word"):
-            with st.spinner("Creating Word document..."):
+        if st.button("📄 Generate Word", type="primary", use_container_width=True):
+            with st.spinner("Creating..."):
                 try:
-                    # Generate filename with basename
-                    word_filename = f"{st.session_state.file_basename}_gene_coverage_report.docx"
-                    
-                    # Generate document
+                    word_filename = f"{st.session_state.file_basename}_report.docx"
                     doc = create_word_document(df_grouped, word_filename)
-                    
-                    # Save to bytes
                     doc_bytes = io.BytesIO()
                     doc.save(doc_bytes)
                     doc_bytes.seek(0)
-                    
-                    # Store in session state for download
                     st.session_state.doc_bytes = doc_bytes
                     st.session_state.word_filename = word_filename
-                    st.success("✅ Document ready! Click below to download.")
+                    st.success("✅ Ready!")
                 except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
+                    st.error(f"❌ {str(e)}")
         
-        # Show download button if document is ready
         if 'doc_bytes' in st.session_state:
             st.download_button(
-                label=f"⬇️ Download {st.session_state.word_filename}",
+                f"⬇️ {st.session_state.word_filename}",
                 data=st.session_state.doc_bytes,
                 file_name=st.session_state.word_filename,
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -550,367 +392,17 @@ if st.session_state.coverage_data is not None and st.session_state.panel_genes:
             )
     
     with col2:
-        # CSV download - always available
-        csv_filename = f"{st.session_state.file_basename}_gene_coverage_filtered.csv"
-        csv = df_grouped.to_csv(index=False)
+        csv_filename = f"{st.session_state.file_basename}_filtered.csv"
         st.download_button(
-            label=f"📊 Download {csv_filename}",
-            data=csv,
+            f"📊 {csv_filename}",
+            data=df_grouped.to_csv(index=False),
             file_name=csv_filename,
             mime="text/csv",
             use_container_width=True
         )
     
-    st.markdown("---")
-    
-    with st.expander("👁️ View All Filtered Genes", expanded=False):
-        # Create preview with badges
-        preview_html = '<div class="gene-preview">'
-        for _, row in df_grouped.iterrows():
-            badge_class = "gene-badge-low" if row['Perc_1x'] < 90 else "gene-badge"
-            preview_html += f'<span class="{badge_class}"><i>{row["Gene_ID"]}</i> ({row["Perc_1x"]}%)</span>'
-        preview_html += '</div>'
-        
-        st.markdown(preview_html, unsafe_allow_html=True)
-        st.info("ℹ️ Genes with coverage below 90% are highlighted in red")
+    with st.expander("👁️ View Genes"):
+        st.dataframe(df_grouped, use_container_width=True, height=300)
 
-# Footer
-st.markdown("---")
-
-# Batch HTML Generator Section
-st.markdown("## 📦 Batch HTML Report Generator")
-st.markdown("Upload multiple CSV files and generate interactive HTML reports")
-
-with st.expander("🔧 Generate Batch HTML Reports", expanded=False):
-    st.markdown("""
-    **How it works:**
-    1. Upload multiple processed CSV files (or use the ones you just created)
-    2. Each CSV file will generate one HTML report
-    3. Download all reports as a single ZIP file
-    
-    **Requirements:**
-    - CSV files must have `Gene_ID` and `Perc_1x` columns
-    - File names will be used as report titles
-    """)
-    
-    batch_files = st.file_uploader(
-        "Upload Multiple CSV Files",
-        type=['csv'],
-        accept_multiple_files=True,
-        key='batch_csvs',
-        help="Select all CSV files you want to convert to HTML reports"
-    )
-    
-    if batch_files:
-        st.info(f"✅ Loaded {len(batch_files)} CSV files")
-        
-        if st.button("🎨 Generate HTML Reports", type="primary", use_container_width=True):
-            with st.spinner(f"Generating {len(batch_files)} HTML reports..."):
-                try:
-                    import zipfile
-                    from datetime import datetime
-                    
-                    # Create ZIP file in memory
-                    zip_buffer = io.BytesIO()
-                    
-                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                        for idx, csv_file in enumerate(batch_files):
-                            # Read CSV
-                            df = pd.read_csv(csv_file)
-                            
-                            # Get filename without extension
-                            patient_name = os.path.splitext(csv_file.name)[0]
-                            
-                            # Generate HTML
-                            html_content = generate_html_report(df, patient_name)
-                            
-                            # Add to ZIP
-                            safe_filename = patient_name.replace(' ', '_')
-                            zip_file.writestr(f"coverage_{safe_filename}.html", html_content)
-                            
-                            # Update progress
-                            progress = int((idx + 1) / len(batch_files) * 100)
-                            st.progress(progress / 100, text=f"Creating report {idx + 1} of {len(batch_files)}...")
-                    
-                    zip_buffer.seek(0)
-                    
-                    # Offer download
-                    st.success(f"✅ Generated {len(batch_files)} HTML reports!")
-                    
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    st.download_button(
-                        label=f"⬇️ Download All Reports (ZIP)",
-                        data=zip_buffer.getvalue(),
-                        file_name=f"gene_coverage_reports_{timestamp}.zip",
-                        mime="application/zip",
-                        use_container_width=True,
-                        type="primary"
-                    )
-                    
-                except Exception as e:
-                    st.error(f"❌ Error generating reports: {str(e)}")
-
-def generate_html_report(df, patient_name):
-    """Generate interactive HTML report for a single patient"""
-    
-    # Build table rows
-    rows_html = []
-    for idx, row in df.iterrows():
-        gene = row.get('Gene_ID', row.get('Gene_Name', ''))
-        coverage = row.get('Perc_1x', row.get('Coverage', ''))
-        rows_html.append(f"<tr><td>{idx + 1}</td><td>{gene}</td><td>{coverage}</td></tr>")
-    
-    table_rows = '\n'.join(rows_html)
-    
-    # HTML template
-    html_template = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Gene Coverage Report - {patient_name}</title>
-  <style>
-    body {{
-      margin: 0;
-      font-family: Arial, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      padding: 20px;
-    }}
-
-    .container {{
-      max-width: 1200px;
-      margin: 0 auto;
-      background: white;
-      border-radius: 15px;
-      padding: 30px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-    }}
-
-    .header {{
-      text-align: center;
-      margin-bottom: 30px;
-      padding-bottom: 20px;
-      border-bottom: 3px solid #667eea;
-    }}
-
-    .header h1 {{
-      color: #667eea;
-      margin: 0;
-      font-size: 2em;
-    }}
-
-    .patient-name {{
-      color: #666;
-      font-size: 1.2em;
-      margin-top: 10px;
-    }}
-
-    .controls {{
-      margin: 20px 0;
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      justify-content: center;
-    }}
-
-    input[type="text"] {{
-      padding: 10px 15px;
-      font-size: 14px;
-      border: 2px solid #667eea;
-      border-radius: 8px;
-      min-width: 300px;
-    }}
-
-    button {{
-      padding: 10px 20px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 600;
-      transition: transform 0.2s;
-    }}
-
-    button:hover {{
-      transform: translateY(-2px);
-      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-    }}
-
-    .table-wrapper {{
-      max-height: 600px;
-      overflow-y: auto;
-      border: 2px solid #667eea;
-      border-radius: 10px;
-      margin-top: 20px;
-    }}
-
-    table {{
-      border-collapse: collapse;
-      width: 100%;
-    }}
-
-    th, td {{
-      border: 1px solid #dee2e6;
-      padding: 12px;
-      text-align: center;
-      font-size: 14px;
-    }}
-
-    th {{
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      position: sticky;
-      top: 0;
-      font-weight: 600;
-      z-index: 10;
-    }}
-
-    tr:nth-child(even) {{
-      background-color: #f8f9fa;
-    }}
-
-    tr:hover {{
-      background-color: #e9ecef;
-    }}
-
-    .stats {{
-      display: flex;
-      gap: 20px;
-      justify-content: center;
-      margin: 20px 0;
-    }}
-
-    .stat-box {{
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      padding: 15px 30px;
-      border-radius: 10px;
-      text-align: center;
-    }}
-
-    .stat-box h3 {{
-      margin: 0;
-      font-size: 2em;
-    }}
-
-    .stat-box p {{
-      margin: 5px 0 0 0;
-      opacity: 0.9;
-    }}
-
-    @media only screen and (max-width: 600px) {{
-      .table-wrapper {{
-        max-height: 400px;
-      }}
-      table {{
-        font-size: 12px;
-      }}
-      .stats {{
-        flex-direction: column;
-      }}
-    }}
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>🧬 Gene Coverage Report</h1>
-      <div class="patient-name">{patient_name}</div>
-    </div>
-
-    <div class="stats">
-      <div class="stat-box">
-        <h3 id="totalGenes">{len(df)}</h3>
-        <p>Total Genes</p>
-      </div>
-      <div class="stat-box">
-        <h3 id="avgCoverage">{df['Perc_1x'].mean():.2f}%</h3>
-        <p>Average Coverage</p>
-      </div>
-    </div>
-
-    <div class="controls">
-      <input type="text" id="searchInput" placeholder="🔍 Search by Gene..." />
-      <button onclick="sortTable(true)">↑ Sort Ascending</button>
-      <button onclick="sortTable(false)">↓ Sort Descending</button>
-      <button onclick="downloadCSV()">📥 Download CSV</button>
-    </div>
-
-    <div class="table-wrapper">
-      <table id="dataTable">
-        <thead>
-          <tr>
-            <th>S.No</th>
-            <th>Gene</th>
-            <th>Coverage (%)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {table_rows}
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <script>
-    const searchInput = document.getElementById('searchInput');
-    const tbody = document.querySelector('tbody');
-    let rows = Array.from(tbody.querySelectorAll('tr'));
-
-    searchInput.addEventListener('keyup', function(event) {{
-      const searchText = event.target.value.toLowerCase();
-      rows.forEach(row => {{
-        const cells = Array.from(row.getElementsByTagName('td'));
-        const found = cells.some(cell => cell.textContent.toLowerCase().includes(searchText));
-        row.style.display = found ? '' : 'none';
-      }});
-      updateStats();
-    }});
-
-    function sortTable(ascending) {{
-      const sortedRows = rows.slice().sort((a, b) => {{
-        const aVal = parseFloat(a.cells[2].textContent) || 0;
-        const bVal = parseFloat(b.cells[2].textContent) || 0;
-        return ascending ? aVal - bVal : bVal - aVal;
-      }});
-
-      sortedRows.forEach((row, index) => {{
-        row.cells[0].textContent = index + 1;
-        tbody.appendChild(row);
-      }});
-      rows = sortedRows;
-    }}
-
-    function updateStats() {{
-      const visibleRows = rows.filter(row => row.style.display !== 'none');
-      document.getElementById('totalGenes').textContent = visibleRows.length;
-    }}
-
-    function downloadCSV() {{
-      const visibleRows = rows.filter(row => row.style.display !== 'none');
-      let csvContent = "S.No,Gene,Coverage\\n";
-      visibleRows.forEach(row => {{
-        const cells = Array.from(row.cells).map(cell => '"' + cell.textContent.trim() + '"');
-        csvContent += cells.join(',') + '\\n';
-      }});
-      const blob = new Blob([csvContent], {{ type: 'text/csv;charset=utf-8;' }});
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = 'gene_coverage_{patient_name}.csv';
-      link.click();
-    }}
-  </script>
-</body>
-</html>"""
-    
-    return html_template
-
-st.markdown("---")
-st.markdown(
-    "<p style='text-align: center; color: #6c757d;'>"
-    "All processing happens on the server. Your data is not stored permanently."
-    "</p>",
-    unsafe_allow_html=True
-)
+st.divider()
+st.caption("All processing happens on the server. Data is not stored permanently.")
