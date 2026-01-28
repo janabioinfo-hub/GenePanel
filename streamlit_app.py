@@ -52,7 +52,7 @@ st.markdown("""
         padding: 1rem;
         border-radius: 8px;
         border: 1px solid #dee2e6;
-        max-height: 400px;
+        max-height: 300px;
         overflow-y: auto;
     }
     .gene-badge {
@@ -196,26 +196,29 @@ if st.session_state.coverage_data is not None and st.session_state.panel_genes:
     
     st.session_state.filtered_data = df_grouped
     
+    
     # Display preview
     st.markdown("---")
-    st.markdown("### Preview: Filtered Genes")
     
-    # Create preview with badges
-    preview_html = '<div class="gene-preview">'
-    for _, row in df_grouped.iterrows():
-        badge_class = "gene-badge-low" if row['Perc_1x'] < 90 else "gene-badge"
-        preview_html += f'<span class="{badge_class}"><i>{row["Gene_ID"]}</i> ({row["Perc_1x"]}%)</span>'
-    preview_html += '</div>'
+    # Summary stats
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Genes", len(df_grouped))
+    with col2:
+        low_coverage = len(df_grouped[df_grouped['Perc_1x'] < 90])
+        st.metric("Low Coverage (<90%)", low_coverage)
+    with col3:
+        avg_coverage = df_grouped['Perc_1x'].mean()
+        st.metric("Average Coverage", f"{avg_coverage:.2f}%")
     
-    st.markdown(preview_html, unsafe_allow_html=True)
-    st.info("ℹ️ Genes with coverage below 90% are highlighted in red")
-    
-    # Action buttons
     st.markdown("---")
-    col1, col2 = st.columns([2, 1])
+    st.markdown("### 📥 Download Results")
+    
+    # Action buttons - prominently placed
+    col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("📄 Generate Word Document", use_container_width=True):
+        if st.button("📄 Generate Word Document", type="primary", use_container_width=True, key="gen_word"):
             with st.spinner("Creating Word document..."):
                 try:
                     # Generate document
@@ -226,20 +229,25 @@ if st.session_state.coverage_data is not None and st.session_state.panel_genes:
                     doc.save(doc_bytes)
                     doc_bytes.seek(0)
                     
-                    # Download button
-                    st.download_button(
-                        label="⬇️ Download Word Document",
-                        data=doc_bytes,
-                        file_name="gene_coverage_report.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True
-                    )
-                    st.success("✅ Document generated successfully!")
+                    # Store in session state for download
+                    st.session_state.doc_bytes = doc_bytes
+                    st.success("✅ Document ready! Click below to download.")
                 except Exception as e:
-                    st.error(f"❌ Error generating document: {str(e)}")
+                    st.error(f"❌ Error: {str(e)}")
+        
+        # Show download button if document is ready
+        if 'doc_bytes' in st.session_state:
+            st.download_button(
+                label="⬇️ Download Word Document",
+                data=st.session_state.doc_bytes,
+                file_name="gene_coverage_report.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True,
+                type="primary"
+            )
     
     with col2:
-        # CSV download
+        # CSV download - always available
         csv = df_grouped.to_csv(index=False)
         st.download_button(
             label="📊 Download CSV",
@@ -248,6 +256,19 @@ if st.session_state.coverage_data is not None and st.session_state.panel_genes:
             mime="text/csv",
             use_container_width=True
         )
+    
+    st.markdown("---")
+    
+    with st.expander("👁️ View All Filtered Genes", expanded=False):
+        # Create preview with badges
+        preview_html = '<div class="gene-preview">'
+        for _, row in df_grouped.iterrows():
+            badge_class = "gene-badge-low" if row['Perc_1x'] < 90 else "gene-badge"
+            preview_html += f'<span class="{badge_class}"><i>{row["Gene_ID"]}</i> ({row["Perc_1x"]}%)</span>'
+        preview_html += '</div>'
+        
+        st.markdown(preview_html, unsafe_allow_html=True)
+        st.info("ℹ️ Genes with coverage below 90% are highlighted in red")
 
 # Footer
 st.markdown("---")
