@@ -54,23 +54,40 @@ def extract_gene_name(name):
 def generate_html_report(df, patient_name):
     """Generate interactive HTML report"""
     
-    # Get gene column name
-    gene_col = 'Gene_ID' if 'Gene_ID' in df.columns else 'Gene_Name' if 'Gene_Name' in df.columns else df.columns[0]
-    coverage_col = 'Perc_1x' if 'Perc_1x' in df.columns else 'Coverage' if 'Coverage' in df.columns else df.columns[1]
-    
-    rows_html = []
-    for idx, row in df.iterrows():
-        gene = str(row.get(gene_col, ''))
-        coverage = row.get(coverage_col, 0)
-        # Format coverage as a number with 2 decimal places if it's numeric
-        if isinstance(coverage, (int, float)):
-            coverage_str = f"{coverage:.2f}"
-        else:
-            coverage_str = str(coverage)
-        rows_html.append(f"<tr><td>{idx + 1}</td><td>{gene}</td><td>{coverage_str}</td></tr>")
-    
-    table_rows = '\n'.join(rows_html)
-    avg_coverage = df[coverage_col].mean() if coverage_col in df.columns else 0
+    try:
+        # Get gene column name
+        gene_col = 'Gene_ID' if 'Gene_ID' in df.columns else 'Gene_Name' if 'Gene_Name' in df.columns else df.columns[0]
+        coverage_col = 'Perc_1x' if 'Perc_1x' in df.columns else 'Coverage' if 'Coverage' in df.columns else df.columns[1]
+        
+        print(f"DEBUG: gene_col = {gene_col}, coverage_col = {coverage_col}")
+        print(f"DEBUG: DataFrame columns = {df.columns.tolist()}")
+        print(f"DEBUG: DataFrame shape = {df.shape}")
+        
+        rows_html = []
+        for idx, row in df.iterrows():
+            try:
+                gene = str(row.get(gene_col, ''))
+                coverage = row.get(coverage_col, 0)
+                
+                print(f"DEBUG Row {idx}: gene={gene} (type={type(gene)}), coverage={coverage} (type={type(coverage)})")
+                
+                # Format coverage as a number with 2 decimal places if it's numeric
+                if isinstance(coverage, (int, float)):
+                    coverage_str = f"{coverage:.2f}"
+                else:
+                    coverage_str = str(coverage)
+                
+                rows_html.append(f"<tr><td>{idx + 1}</td><td>{gene}</td><td>{coverage_str}</td></tr>")
+            except Exception as e:
+                print(f"ERROR in row {idx}: {str(e)}")
+                print(f"  gene_col value: {row.get(gene_col, 'N/A')}")
+                print(f"  coverage_col value: {row.get(coverage_col, 'N/A')}")
+                raise Exception(f"Error processing row {idx}: {str(e)}")
+        
+        table_rows = '\n'.join(rows_html)
+        avg_coverage = df[coverage_col].mean() if coverage_col in df.columns else 0
+    except Exception as e:
+        raise Exception(f"Error in generate_html_report: {str(e)}")
     
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -684,15 +701,26 @@ with st.expander("📦 Batch HTML Report Generator"):
                 
                 with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
                     for idx, csv_file in enumerate(batch_files):
-                        df = pd.read_csv(csv_file)
-                        patient_name = os.path.splitext(csv_file.name)[0]
-                        html_content = generate_html_report(df, patient_name)
-                        
-                        safe_filename = patient_name.replace(' ', '_').replace('/', '_')
-                        zip_file.writestr(f"coverage_{safe_filename}.html", html_content)
-                        
-                        progress = int((idx + 1) / len(batch_files) * 100)
-                        progress_bar.progress(progress / 100, f"Creating {idx + 1} of {len(batch_files)}...")
+                        try:
+                            st.write(f"DEBUG: Processing file {idx + 1}: {csv_file.name}")
+                            df = pd.read_csv(csv_file)
+                            st.write(f"DEBUG: DataFrame shape: {df.shape}")
+                            st.write(f"DEBUG: DataFrame columns: {df.columns.tolist()}")
+                            st.write(f"DEBUG: First row data types: {df.dtypes.to_dict()}")
+                            
+                            patient_name = os.path.splitext(csv_file.name)[0]
+                            st.write(f"DEBUG: Patient name: {patient_name}")
+                            
+                            html_content = generate_html_report(df, patient_name)
+                            
+                            safe_filename = patient_name.replace(' ', '_').replace('/', '_')
+                            zip_file.writestr(f"coverage_{safe_filename}.html", html_content)
+                            
+                            progress = int((idx + 1) / len(batch_files) * 100)
+                            progress_bar.progress(progress / 100, f"Creating {idx + 1} of {len(batch_files)}...")
+                        except Exception as file_error:
+                            st.error(f"Error processing {csv_file.name}: {str(file_error)}")
+                            raise
                 
                 zip_buffer.seek(0)
                 progress_bar.empty()
@@ -712,6 +740,8 @@ with st.expander("📦 Batch HTML Report Generator"):
             except Exception as e:
                 progress_bar.empty()
                 st.error(f"❌ Error: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
 
 
 st.divider()
