@@ -51,7 +51,240 @@ def extract_gene_name(name):
             return name.split(';')[0]
         return name
     return None
+def generate_html_report(df, patient_name):
+    """Generate interactive HTML report"""
+    
+    # Get gene column name
+    gene_col = 'Gene_ID' if 'Gene_ID' in df.columns else 'Gene_Name' if 'Gene_Name' in df.columns else df.columns[0]
+    coverage_col = 'Perc_1x' if 'Perc_1x' in df.columns else 'Coverage' if 'Coverage' in df.columns else df.columns[1]
+    
+    rows_html = []
+    for idx, row in df.iterrows():
+        gene = row.get(gene_col, '')
+        coverage = row.get(coverage_col, '')
+        rows_html.append(f"<tr><td>{idx + 1}</td><td>{gene}</td><td>{coverage}</td></tr>")
+    
+    table_rows = '\n'.join(rows_html)
+    avg_coverage = df[coverage_col].mean() if coverage_col in df.columns else 0
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gene Coverage Report - {patient_name}</title>
+  <style>
+    body {{
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+    }}
+    .container {{
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 15px;
+      padding: 30px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }}
+    .header {{
+      text-align: center;
+      margin-bottom: 30px;
+      padding-bottom: 20px;
+      border-bottom: 3px solid #667eea;
+    }}
+    .header h1 {{
+      color: #667eea;
+      margin: 0;
+      font-size: 2em;
+    }}
+    .patient-name {{
+      color: #666;
+      font-size: 1.2em;
+      margin-top: 10px;
+    }}
+    .controls {{
+      margin: 20px 0;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }}
+    input[type="text"] {{
+      padding: 10px 15px;
+      font-size: 14px;
+      border: 2px solid #667eea;
+      border-radius: 8px;
+      min-width: 300px;
+    }}
+    button {{
+      padding: 10px 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: transform 0.2s;
+    }}
+    button:hover {{
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    }}
+    .table-wrapper {{
+      max-height: 600px;
+      overflow-y: auto;
+      border: 2px solid #667eea;
+      border-radius: 10px;
+      margin-top: 20px;
+    }}
+    table {{
+      border-collapse: collapse;
+      width: 100%;
+    }}
+    th, td {{
+      border: 1px solid #dee2e6;
+      padding: 12px;
+      text-align: center;
+      font-size: 14px;
+    }}
+    th {{
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      position: sticky;
+      top: 0;
+      font-weight: 600;
+      z-index: 10;
+    }}
+    tr:nth-child(even) {{
+      background-color: #f8f9fa;
+    }}
+    tr:hover {{
+      background-color: #e9ecef;
+    }}
+    .stats {{
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      margin: 20px 0;
+    }}
+    .stat-box {{
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 15px 30px;
+      border-radius: 10px;
+      text-align: center;
+    }}
+    .stat-box h3 {{
+      margin: 0;
+      font-size: 2em;
+    }}
+    .stat-box p {{
+      margin: 5px 0 0 0;
+      opacity: 0.9;
+    }}
+    @media only screen and (max-width: 600px) {{
+      .table-wrapper {{ max-height: 400px; }}
+      table {{ font-size: 12px; }}
+      .stats {{ flex-direction: column; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🧬 Gene Coverage Report</h1>
+      <div class="patient-name">{patient_name}</div>
+    </div>
 
+    <div class="stats">
+      <div class="stat-box">
+        <h3 id="totalGenes">{len(df)}</h3>
+        <p>Total Genes</p>
+      </div>
+      <div class="stat-box">
+        <h3 id="avgCoverage">{avg_coverage:.2f}%</h3>
+        <p>Average Coverage</p>
+      </div>
+    </div>
+
+    <div class="controls">
+      <input type="text" id="searchInput" placeholder="🔍 Search by Gene..." />
+      <button onclick="sortTable(true)">↑ Ascending</button>
+      <button onclick="sortTable(false)">↓ Descending</button>
+      <button onclick="downloadCSV()">📥 Download CSV</button>
+    </div>
+
+    <div class="table-wrapper">
+      <table id="dataTable">
+        <thead>
+          <tr>
+            <th>S.No</th>
+            <th>Gene</th>
+            <th>Coverage (%)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {table_rows}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const searchInput = document.getElementById('searchInput');
+    const tbody = document.querySelector('tbody');
+    let rows = Array.from(tbody.querySelectorAll('tr'));
+
+    searchInput.addEventListener('keyup', function(e) {{
+      const searchText = e.target.value.toLowerCase();
+      rows.forEach(row => {{
+        const found = Array.from(row.cells).some(cell => 
+          cell.textContent.toLowerCase().includes(searchText)
+        );
+        row.style.display = found ? '' : 'none';
+      }});
+      updateStats();
+    }});
+
+    function sortTable(ascending) {{
+      const sortedRows = rows.slice().sort((a, b) => {{
+        const aVal = parseFloat(a.cells[2].textContent) || 0;
+        const bVal = parseFloat(b.cells[2].textContent) || 0;
+        return ascending ? aVal - bVal : bVal - aVal;
+      }});
+      sortedRows.forEach((row, i) => {{
+        row.cells[0].textContent = i + 1;
+        tbody.appendChild(row);
+      }});
+      rows = sortedRows;
+    }}
+
+    function updateStats() {{
+      const visible = rows.filter(row => row.style.display !== 'none');
+      document.getElementById('totalGenes').textContent = visible.length;
+    }}
+
+    function downloadCSV() {{
+      const visible = rows.filter(row => row.style.display !== 'none');
+      let csv = "S.No,Gene,Coverage\\n";
+      visible.forEach(row => {{
+        const cells = Array.from(row.cells).map(c => '"' + c.textContent.trim() + '"');
+        csv += cells.join(',') + '\\n';
+      }});
+      const blob = new Blob([csv], {{ type: 'text/csv' }});
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'coverage_{patient_name}.csv';
+      link.click();
+    }}
+  </script>
+</body>
+</html>"""
+    
+    return html
 def parse_gene_list(text):
     """Parse gene list with support for newlines, commas, and spaces. Remove duplicates."""
     if not text.strip():
@@ -475,240 +708,6 @@ with st.expander("📦 Batch HTML Report Generator"):
                 progress_bar.empty()
                 st.error(f"❌ Error: {str(e)}")
 
-def generate_html_report(df, patient_name):
-    """Generate interactive HTML report"""
-    
-    # Get gene column name
-    gene_col = 'Gene_ID' if 'Gene_ID' in df.columns else 'Gene_Name' if 'Gene_Name' in df.columns else df.columns[0]
-    coverage_col = 'Perc_1x' if 'Perc_1x' in df.columns else 'Coverage' if 'Coverage' in df.columns else df.columns[1]
-    
-    rows_html = []
-    for idx, row in df.iterrows():
-        gene = row.get(gene_col, '')
-        coverage = row.get(coverage_col, '')
-        rows_html.append(f"<tr><td>{idx + 1}</td><td>{gene}</td><td>{coverage}</td></tr>")
-    
-    table_rows = '\n'.join(rows_html)
-    avg_coverage = df[coverage_col].mean() if coverage_col in df.columns else 0
-    
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Gene Coverage Report - {patient_name}</title>
-  <style>
-    body {{
-      margin: 0;
-      font-family: Arial, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      padding: 20px;
-    }}
-    .container {{
-      max-width: 1200px;
-      margin: 0 auto;
-      background: white;
-      border-radius: 15px;
-      padding: 30px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-    }}
-    .header {{
-      text-align: center;
-      margin-bottom: 30px;
-      padding-bottom: 20px;
-      border-bottom: 3px solid #667eea;
-    }}
-    .header h1 {{
-      color: #667eea;
-      margin: 0;
-      font-size: 2em;
-    }}
-    .patient-name {{
-      color: #666;
-      font-size: 1.2em;
-      margin-top: 10px;
-    }}
-    .controls {{
-      margin: 20px 0;
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      justify-content: center;
-    }}
-    input[type="text"] {{
-      padding: 10px 15px;
-      font-size: 14px;
-      border: 2px solid #667eea;
-      border-radius: 8px;
-      min-width: 300px;
-    }}
-    button {{
-      padding: 10px 20px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 600;
-      transition: transform 0.2s;
-    }}
-    button:hover {{
-      transform: translateY(-2px);
-      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-    }}
-    .table-wrapper {{
-      max-height: 600px;
-      overflow-y: auto;
-      border: 2px solid #667eea;
-      border-radius: 10px;
-      margin-top: 20px;
-    }}
-    table {{
-      border-collapse: collapse;
-      width: 100%;
-    }}
-    th, td {{
-      border: 1px solid #dee2e6;
-      padding: 12px;
-      text-align: center;
-      font-size: 14px;
-    }}
-    th {{
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      position: sticky;
-      top: 0;
-      font-weight: 600;
-      z-index: 10;
-    }}
-    tr:nth-child(even) {{
-      background-color: #f8f9fa;
-    }}
-    tr:hover {{
-      background-color: #e9ecef;
-    }}
-    .stats {{
-      display: flex;
-      gap: 20px;
-      justify-content: center;
-      margin: 20px 0;
-    }}
-    .stat-box {{
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      padding: 15px 30px;
-      border-radius: 10px;
-      text-align: center;
-    }}
-    .stat-box h3 {{
-      margin: 0;
-      font-size: 2em;
-    }}
-    .stat-box p {{
-      margin: 5px 0 0 0;
-      opacity: 0.9;
-    }}
-    @media only screen and (max-width: 600px) {{
-      .table-wrapper {{ max-height: 400px; }}
-      table {{ font-size: 12px; }}
-      .stats {{ flex-direction: column; }}
-    }}
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>🧬 Gene Coverage Report</h1>
-      <div class="patient-name">{patient_name}</div>
-    </div>
-
-    <div class="stats">
-      <div class="stat-box">
-        <h3 id="totalGenes">{len(df)}</h3>
-        <p>Total Genes</p>
-      </div>
-      <div class="stat-box">
-        <h3 id="avgCoverage">{avg_coverage:.2f}%</h3>
-        <p>Average Coverage</p>
-      </div>
-    </div>
-
-    <div class="controls">
-      <input type="text" id="searchInput" placeholder="🔍 Search by Gene..." />
-      <button onclick="sortTable(true)">↑ Ascending</button>
-      <button onclick="sortTable(false)">↓ Descending</button>
-      <button onclick="downloadCSV()">📥 Download CSV</button>
-    </div>
-
-    <div class="table-wrapper">
-      <table id="dataTable">
-        <thead>
-          <tr>
-            <th>S.No</th>
-            <th>Gene</th>
-            <th>Coverage (%)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {table_rows}
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <script>
-    const searchInput = document.getElementById('searchInput');
-    const tbody = document.querySelector('tbody');
-    let rows = Array.from(tbody.querySelectorAll('tr'));
-
-    searchInput.addEventListener('keyup', function(e) {{
-      const searchText = e.target.value.toLowerCase();
-      rows.forEach(row => {{
-        const found = Array.from(row.cells).some(cell => 
-          cell.textContent.toLowerCase().includes(searchText)
-        );
-        row.style.display = found ? '' : 'none';
-      }});
-      updateStats();
-    }});
-
-    function sortTable(ascending) {{
-      const sortedRows = rows.slice().sort((a, b) => {{
-        const aVal = parseFloat(a.cells[2].textContent) || 0;
-        const bVal = parseFloat(b.cells[2].textContent) || 0;
-        return ascending ? aVal - bVal : bVal - aVal;
-      }});
-      sortedRows.forEach((row, i) => {{
-        row.cells[0].textContent = i + 1;
-        tbody.appendChild(row);
-      }});
-      rows = sortedRows;
-    }}
-
-    function updateStats() {{
-      const visible = rows.filter(row => row.style.display !== 'none');
-      document.getElementById('totalGenes').textContent = visible.length;
-    }}
-
-    function downloadCSV() {{
-      const visible = rows.filter(row => row.style.display !== 'none');
-      let csv = "S.No,Gene,Coverage\\n";
-      visible.forEach(row => {{
-        const cells = Array.from(row.cells).map(c => '"' + c.textContent.trim() + '"');
-        csv += cells.join(',') + '\\n';
-      }});
-      const blob = new Blob([csv], {{ type: 'text/csv' }});
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = 'coverage_{patient_name}.csv';
-      link.click();
-    }}
-  </script>
-</body>
-</html>"""
-    
-    return html
 
 st.divider()
 st.caption("All processing happens on the server. Data is not stored permanently.")
