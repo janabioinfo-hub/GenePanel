@@ -61,8 +61,13 @@ def generate_html_report(df, patient_name):
     rows_html = []
     for idx, row in df.iterrows():
         gene = str(row.get(gene_col, ''))
-        coverage = row.get(coverage_col, '')
-        rows_html.append(f"<tr><td>{idx + 1}</td><td>{gene}</td><td>{coverage}</td></tr>")
+        coverage = row.get(coverage_col, 0)
+        # Format coverage as a number with 2 decimal places if it's numeric
+        if isinstance(coverage, (int, float)):
+            coverage_str = f"{coverage:.2f}"
+        else:
+            coverage_str = str(coverage)
+        rows_html.append(f"<tr><td>{idx + 1}</td><td>{gene}</td><td>{coverage_str}</td></tr>")
     
     table_rows = '\n'.join(rows_html)
     avg_coverage = df[coverage_col].mean() if coverage_col in df.columns else 0
