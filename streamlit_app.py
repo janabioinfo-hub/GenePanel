@@ -60,7 +60,7 @@ def generate_html_report(df, patient_name):
     
     rows_html = []
     for idx, row in df.iterrows():
-        gene = row.get(gene_col, '')
+        gene = str(row.get(gene_col, ''))
         coverage = row.get(coverage_col, '')
         rows_html.append(f"<tr><td>{idx + 1}</td><td>{gene}</td><td>{coverage}</td></tr>")
     
