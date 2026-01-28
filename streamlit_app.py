@@ -63,16 +63,20 @@ def generate_html_report(df, patient_name):
         print(f"DEBUG: DataFrame columns = {df.columns.tolist()}")
         print(f"DEBUG: DataFrame shape = {df.shape}")
         
+        # Convert coverage column to numeric, coercing errors to NaN
+        if coverage_col in df.columns:
+            df[coverage_col] = pd.to_numeric(df[coverage_col], errors='coerce')
+        
         rows_html = []
         for idx, row in df.iterrows():
             try:
                 gene = str(row.get(gene_col, ''))
                 coverage = row.get(coverage_col, 0)
                 
-                print(f"DEBUG Row {idx}: gene={gene} (type={type(gene)}), coverage={coverage} (type={type(coverage)})")
-                
                 # Format coverage as a number with 2 decimal places if it's numeric
-                if isinstance(coverage, (int, float)):
+                if pd.isna(coverage):
+                    coverage_str = "0.00"
+                elif isinstance(coverage, (int, float)):
                     coverage_str = f"{coverage:.2f}"
                 else:
                     coverage_str = str(coverage)
@@ -85,7 +89,14 @@ def generate_html_report(df, patient_name):
                 raise Exception(f"Error processing row {idx}: {str(e)}")
         
         table_rows = '\n'.join(rows_html)
-        avg_coverage = df[coverage_col].mean() if coverage_col in df.columns else 0
+        
+        # Calculate average coverage, handling NaN values
+        if coverage_col in df.columns:
+            avg_coverage = df[coverage_col].mean(skipna=True)
+            if pd.isna(avg_coverage):
+                avg_coverage = 0
+        else:
+            avg_coverage = 0
     except Exception as e:
         raise Exception(f"Error in generate_html_report: {str(e)}")
     
