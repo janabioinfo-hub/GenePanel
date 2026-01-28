@@ -8,6 +8,105 @@ from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 import io
 
+def create_word_document(df_grouped):
+    """Create Word document with gene coverage table"""
+    doc = Document()
+    doc.add_heading('Appendix 1: Gene Coverage', 1)
+    doc.add_heading('Indication Based Analysis:', 2)
+    
+    chunk_size = 4
+    chunks = [df_grouped[i:i+chunk_size] for i in range(0, len(df_grouped), chunk_size)]
+    
+    table = doc.add_table(rows=1, cols=chunk_size*2)
+    table.alignment = 1
+    hdr_cells = table.rows[0].cells
+    
+    # Header row
+    for i in range(chunk_size):
+        # Gene Name header
+        gene_hdr_cell = hdr_cells[i*2]
+        gene_hdr_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        gene_hdr_para = gene_hdr_cell.paragraphs[0]
+        gene_hdr_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        gene_hdr_run = gene_hdr_para.add_run("Gene Name")
+        gene_hdr_run.font.name = 'Calibri'
+        gene_hdr_run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
+        gene_hdr_run.font.size = Pt(8)
+        
+        # Coverage header
+        perc_hdr_cell = hdr_cells[i*2+1]
+        perc_hdr_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        perc_hdr_para = perc_hdr_cell.paragraphs[0]
+        perc_hdr_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        perc_hdr_run = perc_hdr_para.add_run("Percentage of coding region covered")
+        perc_hdr_run.font.name = 'Calibri'
+        perc_hdr_run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
+        perc_hdr_run.font.size = Pt(8)
+    
+    # Data rows
+    for chunk in chunks:
+        row_cells = table.add_row().cells
+        for i in range(chunk_size):
+            if i < len(chunk):
+                row = chunk.iloc[i]
+                gene = str(row['Gene_ID'])
+                percent = row['Perc_1x']
+                percent_str = str(percent)
+                
+                # Gene cell
+                gene_cell = row_cells[i*2]
+                gene_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                gene_para = gene_cell.paragraphs[0]
+                gene_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+                gene_run = gene_para.add_run(gene)
+                gene_run.font.name = 'Calibri'
+                gene_run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
+                gene_run.font.size = Pt(8)
+                gene_run.italic = True
+                if percent < 90:
+                    gene_run.font.color.rgb = RGBColor(255, 0, 0)
+                
+                # Percentage cell
+                perc_cell = row_cells[i*2+1]
+                perc_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                perc_para = perc_cell.paragraphs[0]
+                perc_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+                perc_run = perc_para.add_run(percent_str)
+                perc_run.font.name = 'Calibri'
+                perc_run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
+                perc_run.font.size = Pt(8)
+                if percent < 90:
+                    perc_run.font.color.rgb = RGBColor(255, 0, 0)
+            else:
+                # Empty cells
+                for empty_cell in [row_cells[i*2], row_cells[i*2+1]]:
+                    empty_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                    para = empty_cell.paragraphs[0]
+                    para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+                    run = para.add_run("–")
+                    run.font.name = 'Calibri'
+                    run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
+                    run.font.size = Pt(8)
+                    run.font.color.rgb = RGBColor(255, 255, 255)
+    
+    # Add table borders
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    if tblPr is None:
+        tblPr = OxmlElement('w:tblPr')
+        tbl.append(tblPr)
+    tblBorders = OxmlElement('w:tblBorders')
+    for border_name in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+        border = OxmlElement(f'w:{border_name}')
+        border.set(qn('w:val'), 'single')
+        border.set(qn('w:sz'), '4')
+        border.set(qn('w:space'), '0')
+        border.set(qn('w:color'), '000000')
+        tblBorders.append(border)
+    tblPr.append(tblBorders)
+    
+    return doc
+
 st.set_page_config(
     page_title="Gene Coverage Analyzer",
     page_icon="🧬",
@@ -278,102 +377,3 @@ st.markdown(
     "</p>",
     unsafe_allow_html=True
 )
-
-def create_word_document(df_grouped):
-    """Create Word document with gene coverage table"""
-    doc = Document()
-    doc.add_heading('Appendix 1: Gene Coverage', 1)
-    doc.add_heading('Indication Based Analysis:', 2)
-    
-    chunk_size = 4
-    chunks = [df_grouped[i:i+chunk_size] for i in range(0, len(df_grouped), chunk_size)]
-    
-    table = doc.add_table(rows=1, cols=chunk_size*2)
-    table.alignment = 1
-    hdr_cells = table.rows[0].cells
-    
-    # Header row
-    for i in range(chunk_size):
-        # Gene Name header
-        gene_hdr_cell = hdr_cells[i*2]
-        gene_hdr_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-        gene_hdr_para = gene_hdr_cell.paragraphs[0]
-        gene_hdr_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-        gene_hdr_run = gene_hdr_para.add_run("Gene Name")
-        gene_hdr_run.font.name = 'Calibri'
-        gene_hdr_run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
-        gene_hdr_run.font.size = Pt(8)
-        
-        # Coverage header
-        perc_hdr_cell = hdr_cells[i*2+1]
-        perc_hdr_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-        perc_hdr_para = perc_hdr_cell.paragraphs[0]
-        perc_hdr_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-        perc_hdr_run = perc_hdr_para.add_run("Percentage of coding region covered")
-        perc_hdr_run.font.name = 'Calibri'
-        perc_hdr_run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
-        perc_hdr_run.font.size = Pt(8)
-    
-    # Data rows
-    for chunk in chunks:
-        row_cells = table.add_row().cells
-        for i in range(chunk_size):
-            if i < len(chunk):
-                row = chunk.iloc[i]
-                gene = str(row['Gene_ID'])
-                percent = row['Perc_1x']
-                percent_str = str(percent)
-                
-                # Gene cell
-                gene_cell = row_cells[i*2]
-                gene_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                gene_para = gene_cell.paragraphs[0]
-                gene_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-                gene_run = gene_para.add_run(gene)
-                gene_run.font.name = 'Calibri'
-                gene_run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
-                gene_run.font.size = Pt(8)
-                gene_run.italic = True
-                if percent < 90:
-                    gene_run.font.color.rgb = RGBColor(255, 0, 0)
-                
-                # Percentage cell
-                perc_cell = row_cells[i*2+1]
-                perc_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                perc_para = perc_cell.paragraphs[0]
-                perc_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-                perc_run = perc_para.add_run(percent_str)
-                perc_run.font.name = 'Calibri'
-                perc_run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
-                perc_run.font.size = Pt(8)
-                if percent < 90:
-                    perc_run.font.color.rgb = RGBColor(255, 0, 0)
-            else:
-                # Empty cells
-                for empty_cell in [row_cells[i*2], row_cells[i*2+1]]:
-                    empty_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                    para = empty_cell.paragraphs[0]
-                    para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-                    run = para.add_run("–")
-                    run.font.name = 'Calibri'
-                    run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
-                    run.font.size = Pt(8)
-                    run.font.color.rgb = RGBColor(255, 255, 255)
-    
-    # Add table borders
-    tbl = table._tbl
-    tblPr = tbl.tblPr
-    if tblPr is None:
-        tblPr = OxmlElement('w:tblPr')
-        tbl.append(tblPr)
-    tblBorders = OxmlElement('w:tblBorders')
-    for border_name in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
-        border = OxmlElement(f'w:{border_name}')
-        border.set(qn('w:val'), 'single')
-        border.set(qn('w:sz'), '4')
-        border.set(qn('w:space'), '0')
-        border.set(qn('w:color'), '000000')
-        tblBorders.append(border)
-    tblPr.append(tblBorders)
-    
-    return doc
