@@ -314,57 +314,72 @@ with col1:
         )
         
         if raw_excel:
-            # Create progress indicators
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+            # Check if this file has already been processed
+            file_id = f"{raw_excel.name}_{raw_excel.size}"
             
-            try:
-                # Step 1: Reading Excel file
-                status_text.text("📂 Reading Excel file...")
-                progress_bar.progress(20)
+            if 'last_processed_file' not in st.session_state:
+                st.session_state.last_processed_file = None
+            
+            # Only process if it's a new file
+            if st.session_state.last_processed_file != file_id:
+                # Create progress indicators
+                progress_bar = st.progress(0)
+                status_text = st.empty()
                 
-                coverage_df, basename = preprocess_excel(raw_excel, raw_excel.name)
-                
-                # Step 2: Processing complete
-                status_text.text("⚙️ Calculating coverage statistics...")
-                progress_bar.progress(70)
-                
-                st.session_state.coverage_data = coverage_df
-                st.session_state.file_basename = basename
-                
-                # Step 3: Generating CSV
-                status_text.text("📄 Generating CSV output...")
-                progress_bar.progress(90)
-                
-                csv_buffer = io.StringIO()
-                coverage_df.to_csv(csv_buffer, index=False)
-                st.session_state.processed_csv = csv_buffer.getvalue()
-                
-                # Complete
-                progress_bar.progress(100)
-                status_text.text("✅ Processing complete!")
-                
-                # Clear progress indicators after a moment
-                import time
-                time.sleep(0.5)
-                progress_bar.empty()
-                status_text.empty()
-                
-                st.success(f"✅ Processed {len(coverage_df)} gene records from {raw_excel.name}")
+                try:
+                    # Step 1: Reading Excel file
+                    status_text.text("📂 Reading Excel file...")
+                    progress_bar.progress(20)
+                    
+                    coverage_df, basename = preprocess_excel(raw_excel, raw_excel.name)
+                    
+                    # Step 2: Processing complete
+                    status_text.text("⚙️ Calculating coverage statistics...")
+                    progress_bar.progress(70)
+                    
+                    st.session_state.coverage_data = coverage_df
+                    st.session_state.file_basename = basename
+                    
+                    # Step 3: Generating CSV
+                    status_text.text("📄 Generating CSV output...")
+                    progress_bar.progress(90)
+                    
+                    csv_buffer = io.StringIO()
+                    coverage_df.to_csv(csv_buffer, index=False)
+                    st.session_state.processed_csv = csv_buffer.getvalue()
+                    
+                    # Mark this file as processed
+                    st.session_state.last_processed_file = file_id
+                    
+                    # Complete
+                    progress_bar.progress(100)
+                    status_text.text("✅ Processing complete!")
+                    
+                    # Clear progress indicators after a moment
+                    import time
+                    time.sleep(0.5)
+                    progress_bar.empty()
+                    status_text.empty()
+                    
+                except Exception as e:
+                    if 'progress_bar' in locals():
+                        progress_bar.empty()
+                    if 'status_text' in locals():
+                        status_text.empty()
+                    st.error(f"❌ Error processing Excel: {str(e)}")
+            
+            # Always show success message and download button if data exists
+            if st.session_state.processed_csv:
+                st.success(f"✅ Processed {len(st.session_state.coverage_data)} gene records from {raw_excel.name}")
                 
                 # Download button for processed CSV
                 st.download_button(
                     label="⬇️ Download Processed CSV",
                     data=st.session_state.processed_csv,
-                    file_name=f"{basename}_total_coverage_statistics.csv",
+                    file_name=f"{st.session_state.file_basename}_total_coverage_statistics.csv",
                     mime="text/csv",
                     use_container_width=True
                 )
-                
-            except Exception as e:
-                progress_bar.empty()
-                status_text.empty()
-                st.error(f"❌ Error processing Excel: {str(e)}")
     else:
         st.markdown("### Step 2A: Upload Coverage CSV")
         coverage_file = st.file_uploader(
@@ -560,6 +575,338 @@ if st.session_state.coverage_data is not None and st.session_state.panel_genes:
         st.info("ℹ️ Genes with coverage below 90% are highlighted in red")
 
 # Footer
+st.markdown("---")
+
+# Batch HTML Generator Section
+st.markdown("## 📦 Batch HTML Report Generator")
+st.markdown("Upload multiple CSV files and generate interactive HTML reports")
+
+with st.expander("🔧 Generate Batch HTML Reports", expanded=False):
+    st.markdown("""
+    **How it works:**
+    1. Upload multiple processed CSV files (or use the ones you just created)
+    2. Each CSV file will generate one HTML report
+    3. Download all reports as a single ZIP file
+    
+    **Requirements:**
+    - CSV files must have `Gene_ID` and `Perc_1x` columns
+    - File names will be used as report titles
+    """)
+    
+    batch_files = st.file_uploader(
+        "Upload Multiple CSV Files",
+        type=['csv'],
+        accept_multiple_files=True,
+        key='batch_csvs',
+        help="Select all CSV files you want to convert to HTML reports"
+    )
+    
+    if batch_files:
+        st.info(f"✅ Loaded {len(batch_files)} CSV files")
+        
+        if st.button("🎨 Generate HTML Reports", type="primary", use_container_width=True):
+            with st.spinner(f"Generating {len(batch_files)} HTML reports..."):
+                try:
+                    import zipfile
+                    from datetime import datetime
+                    
+                    # Create ZIP file in memory
+                    zip_buffer = io.BytesIO()
+                    
+                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                        for idx, csv_file in enumerate(batch_files):
+                            # Read CSV
+                            df = pd.read_csv(csv_file)
+                            
+                            # Get filename without extension
+                            patient_name = os.path.splitext(csv_file.name)[0]
+                            
+                            # Generate HTML
+                            html_content = generate_html_report(df, patient_name)
+                            
+                            # Add to ZIP
+                            safe_filename = patient_name.replace(' ', '_')
+                            zip_file.writestr(f"coverage_{safe_filename}.html", html_content)
+                            
+                            # Update progress
+                            progress = int((idx + 1) / len(batch_files) * 100)
+                            st.progress(progress / 100, text=f"Creating report {idx + 1} of {len(batch_files)}...")
+                    
+                    zip_buffer.seek(0)
+                    
+                    # Offer download
+                    st.success(f"✅ Generated {len(batch_files)} HTML reports!")
+                    
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    st.download_button(
+                        label=f"⬇️ Download All Reports (ZIP)",
+                        data=zip_buffer.getvalue(),
+                        file_name=f"gene_coverage_reports_{timestamp}.zip",
+                        mime="application/zip",
+                        use_container_width=True,
+                        type="primary"
+                    )
+                    
+                except Exception as e:
+                    st.error(f"❌ Error generating reports: {str(e)}")
+
+def generate_html_report(df, patient_name):
+    """Generate interactive HTML report for a single patient"""
+    
+    # Build table rows
+    rows_html = []
+    for idx, row in df.iterrows():
+        gene = row.get('Gene_ID', row.get('Gene_Name', ''))
+        coverage = row.get('Perc_1x', row.get('Coverage', ''))
+        rows_html.append(f"<tr><td>{idx + 1}</td><td>{gene}</td><td>{coverage}</td></tr>")
+    
+    table_rows = '\n'.join(rows_html)
+    
+    # HTML template
+    html_template = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gene Coverage Report - {patient_name}</title>
+  <style>
+    body {{
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+    }}
+
+    .container {{
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 15px;
+      padding: 30px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }}
+
+    .header {{
+      text-align: center;
+      margin-bottom: 30px;
+      padding-bottom: 20px;
+      border-bottom: 3px solid #667eea;
+    }}
+
+    .header h1 {{
+      color: #667eea;
+      margin: 0;
+      font-size: 2em;
+    }}
+
+    .patient-name {{
+      color: #666;
+      font-size: 1.2em;
+      margin-top: 10px;
+    }}
+
+    .controls {{
+      margin: 20px 0;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }}
+
+    input[type="text"] {{
+      padding: 10px 15px;
+      font-size: 14px;
+      border: 2px solid #667eea;
+      border-radius: 8px;
+      min-width: 300px;
+    }}
+
+    button {{
+      padding: 10px 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: transform 0.2s;
+    }}
+
+    button:hover {{
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    }}
+
+    .table-wrapper {{
+      max-height: 600px;
+      overflow-y: auto;
+      border: 2px solid #667eea;
+      border-radius: 10px;
+      margin-top: 20px;
+    }}
+
+    table {{
+      border-collapse: collapse;
+      width: 100%;
+    }}
+
+    th, td {{
+      border: 1px solid #dee2e6;
+      padding: 12px;
+      text-align: center;
+      font-size: 14px;
+    }}
+
+    th {{
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      position: sticky;
+      top: 0;
+      font-weight: 600;
+      z-index: 10;
+    }}
+
+    tr:nth-child(even) {{
+      background-color: #f8f9fa;
+    }}
+
+    tr:hover {{
+      background-color: #e9ecef;
+    }}
+
+    .stats {{
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      margin: 20px 0;
+    }}
+
+    .stat-box {{
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 15px 30px;
+      border-radius: 10px;
+      text-align: center;
+    }}
+
+    .stat-box h3 {{
+      margin: 0;
+      font-size: 2em;
+    }}
+
+    .stat-box p {{
+      margin: 5px 0 0 0;
+      opacity: 0.9;
+    }}
+
+    @media only screen and (max-width: 600px) {{
+      .table-wrapper {{
+        max-height: 400px;
+      }}
+      table {{
+        font-size: 12px;
+      }}
+      .stats {{
+        flex-direction: column;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🧬 Gene Coverage Report</h1>
+      <div class="patient-name">{patient_name}</div>
+    </div>
+
+    <div class="stats">
+      <div class="stat-box">
+        <h3 id="totalGenes">{len(df)}</h3>
+        <p>Total Genes</p>
+      </div>
+      <div class="stat-box">
+        <h3 id="avgCoverage">{df['Perc_1x'].mean():.2f}%</h3>
+        <p>Average Coverage</p>
+      </div>
+    </div>
+
+    <div class="controls">
+      <input type="text" id="searchInput" placeholder="🔍 Search by Gene..." />
+      <button onclick="sortTable(true)">↑ Sort Ascending</button>
+      <button onclick="sortTable(false)">↓ Sort Descending</button>
+      <button onclick="downloadCSV()">📥 Download CSV</button>
+    </div>
+
+    <div class="table-wrapper">
+      <table id="dataTable">
+        <thead>
+          <tr>
+            <th>S.No</th>
+            <th>Gene</th>
+            <th>Coverage (%)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {table_rows}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const searchInput = document.getElementById('searchInput');
+    const tbody = document.querySelector('tbody');
+    let rows = Array.from(tbody.querySelectorAll('tr'));
+
+    searchInput.addEventListener('keyup', function(event) {{
+      const searchText = event.target.value.toLowerCase();
+      rows.forEach(row => {{
+        const cells = Array.from(row.getElementsByTagName('td'));
+        const found = cells.some(cell => cell.textContent.toLowerCase().includes(searchText));
+        row.style.display = found ? '' : 'none';
+      }});
+      updateStats();
+    }});
+
+    function sortTable(ascending) {{
+      const sortedRows = rows.slice().sort((a, b) => {{
+        const aVal = parseFloat(a.cells[2].textContent) || 0;
+        const bVal = parseFloat(b.cells[2].textContent) || 0;
+        return ascending ? aVal - bVal : bVal - aVal;
+      }});
+
+      sortedRows.forEach((row, index) => {{
+        row.cells[0].textContent = index + 1;
+        tbody.appendChild(row);
+      }});
+      rows = sortedRows;
+    }}
+
+    function updateStats() {{
+      const visibleRows = rows.filter(row => row.style.display !== 'none');
+      document.getElementById('totalGenes').textContent = visibleRows.length;
+    }}
+
+    function downloadCSV() {{
+      const visibleRows = rows.filter(row => row.style.display !== 'none');
+      let csvContent = "S.No,Gene,Coverage\\n";
+      visibleRows.forEach(row => {{
+        const cells = Array.from(row.cells).map(cell => '"' + cell.textContent.trim() + '"');
+        csvContent += cells.join(',') + '\\n';
+      }});
+      const blob = new Blob([csvContent], {{ type: 'text/csv;charset=utf-8;' }});
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'gene_coverage_{patient_name}.csv';
+      link.click();
+    }}
+  </script>
+</body>
+</html>"""
+    
+    return html_template
+
 st.markdown("---")
 st.markdown(
     "<p style='text-align: center; color: #6c757d;'>"
