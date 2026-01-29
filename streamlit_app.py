@@ -185,7 +185,11 @@ def create_word_document_with_mito(df_data, output_filename):
             if i < len(chunk):
                 row = chunk.iloc[i]
                 gene = str(row['Gene_ID'])
-                percent = row['% 1x']
+                percent_value = row['% 1x']
+                if isinstance(percent_value, pd.Series):
+                    percent = float(percent_value.iloc[0])
+                else:
+                    percent = float(percent_value) if pd.notna(percent_value) else 0.0
                 
                 gene_cell = row_cells[i*2]
                 gene_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
