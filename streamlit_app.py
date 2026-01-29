@@ -327,28 +327,67 @@ with col1:
                 # Load mito file with header in row 2 (skip first row)
                 mito_df = pd.read_excel(mito_file, header=1)
                 
-                # Find %1x column
-                mito_cols = [c for c in mito_df.columns if '1x' in c.lower()]
+                # Strip all column names of leading/trailing spaces
+                mito_df.columns = mito_df.columns.str.strip()
+                
+                # DEBUG: Show what columns we found
+                st.write("DEBUG - Mito file columns:", mito_df.columns.tolist())
+                
+                # Find %1x column (more flexible matching)
+                mito_cols = [c for c in mito_df.columns if '1x' in str(c).lower()]
+                
                 if not mito_cols:
                     st.error("❌ No coverage column found in mitochondrial file")
+                    st.write("Available columns:", mito_df.columns.tolist())
                     st.session_state.mito_data = None
                 else:
                     mito_percent_col = mito_cols[0]
-                    mito_df.rename(columns={mito_percent_col: '% 1x'}, inplace=True)
+                    st.write(f"DEBUG - Using column: '{mito_percent_col}'")
+                    
+                    # Rename to standard name
+                    mito_df = mito_df.rename(columns={mito_percent_col: '% 1x'})
                     
                     # Extract gene names from Name column (before '/')
                     if 'Name' not in mito_df.columns:
                         st.error("❌ No 'Name' column found in mitochondrial file")
+                        st.write("Available columns:", mito_df.columns.tolist())
                         st.session_state.mito_data = None
                     else:
-                        mito_df['Gene_ID'] = mito_df['Name'].str.split('/').str[0].str.strip()
+                        # Extract gene ID
+                        mito_df['Gene_ID'] = mito_df['Name'].astype(str).str.split('/').str[0].str.strip()
+                        
+                        # Keep only needed columns
                         mito_df = mito_df[['Gene_ID', '% 1x']].copy()
-                        mito_df['% 1x'] = pd.to_numeric(mito_df['% 1x'], errors='coerce').round(2)
+                        
+                        # Convert to numeric and round
+                        mito_df['% 1x'] = pd.to_numeric(mito_df['% 1x'], errors='coerce')
+                        
+                        # Remove rows with NaN coverage
+                        before_count = len(mito_df)
+                        mito_df = mito_df.dropna(subset=['% 1x'])
+                        after_count = len(mito_df)
+                        
+                        if before_count > after_count:
+                            st.warning(f"⚠️ Removed {before_count - after_count} rows with invalid coverage values")
+                        
+                        # Round the values
+                        mito_df['% 1x'] = mito_df['% 1x'].round(2)
+                        
+                        # Remove empty gene names
+                        mito_df = mito_df[mito_df['Gene_ID'].str.strip() != '']
+                        
+                        # DEBUG: Show sample data
+                        st.write("DEBUG - Mito data sample:")
+                        st.write(mito_df.head())
+                        st.write(f"DEBUG - Data types: {mito_df.dtypes.to_dict()}")
                         
                         st.session_state.mito_data = mito_df
                         st.success(f"✅ Loaded {len(mito_df)} mitochondrial genes")
+                        
             except Exception as e:
                 st.error(f"❌ Error loading mitochondrial file: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
                 st.session_state.mito_data = None
         else:
             st.session_state.mito_data = None
