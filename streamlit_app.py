@@ -339,9 +339,6 @@ with col1:
                 # Strip all column names of leading/trailing spaces
                 mito_df.columns = mito_df.columns.str.strip()
                 
-                # DEBUG: Show what columns we found
-                st.write("DEBUG - Mito file columns:", mito_df.columns.tolist())
-                
                 # Find %1x column (more flexible matching)
                 mito_cols = [c for c in mito_df.columns if '1x' in str(c).lower()]
                 
@@ -351,8 +348,7 @@ with col1:
                     st.session_state.mito_data = None
                 else:
                     mito_percent_col = mito_cols[0]
-                    st.write(f"DEBUG - Using column: '{mito_percent_col}'")
-                    
+
                     # Rename to standard name
                     mito_df = mito_df.rename(columns={mito_percent_col: '% 1x'})
                     
@@ -386,9 +382,7 @@ with col1:
                         mito_df = mito_df[mito_df['Gene_ID'].str.strip() != '']
                         
                         # DEBUG: Show sample data
-                        st.write("DEBUG - Mito data sample:")
                         st.write(mito_df.head())
-                        st.write(f"DEBUG - Data types: {mito_df.dtypes.to_dict()}")
                         
                         st.session_state.mito_data = mito_df
                         st.success(f"✅ Loaded {len(mito_df)} mitochondrial genes")
@@ -489,9 +483,6 @@ if st.session_state.coverage_data is not None and st.session_state.panel_genes:
                         df_panel = df_panel.rename(columns={'Perc_1x': '% 1x'})
                         df_panel = df_panel.sort_values('Gene_ID')
                         
-                        # DEBUG: Verify column names match
-                        st.write("DEBUG - Panel columns:", df_panel.columns.tolist())
-                        st.write("DEBUG - Mito columns:", st.session_state.mito_data.columns.tolist())
                         
                         # Now both dataframes have the same column name: '% 1x'
                         df_final = pd.concat([
@@ -500,10 +491,7 @@ if st.session_state.coverage_data is not None and st.session_state.panel_genes:
                         ], ignore_index=True)
                         
                         # DEBUG: Check after concat
-                        st.write("DEBUG - After concat columns:", df_final.columns.tolist())
-                        st.write("DEBUG - Sample after concat:")
                         st.write(df_final.head(10))
-                        st.write(f"DEBUG - NaN count in % 1x: {df_final['% 1x'].isna().sum()}")
                         
                         # Remove duplicates (keep first occurrence - panel genes take precedence)
                         df_final = df_final.drop_duplicates(subset='Gene_ID', keep='first')
@@ -515,9 +503,6 @@ if st.session_state.coverage_data is not None and st.session_state.panel_genes:
                         df_final = df_final.rename(columns={'Perc_1x': '% 1x'})
                     
                     # Verify the final dataframe
-                    st.write("DEBUG - Final columns:", df_final.columns.tolist())
-                    st.write("DEBUG - Final data types:", df_final.dtypes.to_dict())
-                    st.write("DEBUG - Sample final data:")
                     st.write(df_final.head())
                     
                     word_filename = f"{st.session_state.file_basename}_report.docx"
