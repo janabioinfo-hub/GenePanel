@@ -144,6 +144,10 @@ def create_word_document(df_grouped, output_filename):
 
 def create_word_document_with_mito(df_data, output_filename):
     """Create Word document with gene coverage table - works with mito or regular data"""
+    
+    # IMPORTANT: Reset the index to avoid iloc issues
+    df_data = df_data.reset_index(drop=True)
+    
     doc = Document()
     doc.add_heading('Appendix 1: Gene Coverage', 1)
     doc.add_heading('Indication Based Analysis:', 2)
@@ -180,11 +184,16 @@ def create_word_document_with_mito(df_data, output_filename):
         perc_hdr_run.font.size = Pt(8)
     
     for chunk in chunks:
+        # IMPORTANT: Reset index for each chunk too
+        chunk = chunk.reset_index(drop=True)
+        
         row_cells = table.add_row().cells
         for i in range(chunk_size):
             if i < len(chunk):
                 row = chunk.iloc[i]
                 gene = str(row['Gene_ID'])
+                
+                # Get the percentage value - now using the correct index
                 percent_value = row['% 1x']
                 if isinstance(percent_value, pd.Series):
                     percent = float(percent_value.iloc[0])
