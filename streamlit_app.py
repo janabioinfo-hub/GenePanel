@@ -40,6 +40,8 @@ if 'file_basename' not in st.session_state:
     st.session_state.file_basename = "output"
 if 'last_processed_file' not in st.session_state:
     st.session_state.last_processed_file = None
+if 'mito_data' not in st.session_state:
+    st.session_state.mito_data = None
 
 @st.cache_data
 def extract_gene_name(name):
@@ -290,8 +292,8 @@ with col1:
                     use_container_width=True
                 )
     else:
-        st.subheader("Step 2A: Upload CSV")
-        coverage_file = st.file_uploader("Choose CSV file", type=['csv'], key='coverage')
+        st.subheader("Step 2A: Upload CSV Files")
+        coverage_file = st.file_uploader("Choose Coverage CSV", type=['csv'], key='coverage')
         
         if coverage_file:
             st.session_state.file_basename = os.path.splitext(coverage_file.name)[0]
@@ -305,6 +307,47 @@ with col1:
                 st.success(f"✅ {len(df)} records")
             else:
                 st.error("❌ No coverage column found")
+        
+        # Mitochondrial file upload option
+        st.markdown("---")
+        st.markdown("**Optional: Mitochondrial Data**")
+        mito_file = st.file_uploader(
+            "Upload Mitochondrial Excel (Optional)",
+            type=['xlsx', 'xls'],
+            key='mito_file',
+            help="Excel file with mitochondrial gene coverage (header in row 2)"
+        )
+        
+        if mito_file:
+            try:
+                # Load mito file with header in row 2 (skip first row)
+                mito_df = pd.read_excel(mito_file, header=1)
+                
+                # Find %1x column
+                mito_cols = [c for c in mito_df.columns if '1x' in c.lower()]
+                if not mito_cols:
+                    st.error("❌ No coverage column found in mitochondrial file")
+                    st.session_state.mito_data = None
+                else:
+                    mito_percent_col = mito_cols[0]
+                    mito_df.rename(columns={mito_percent_col: '% 1x'}, inplace=True)
+                    
+                    # Extract gene names from Name column (before '/')
+                    if 'Name' not in mito_df.columns:
+                        st.error("❌ No 'Name' column found in mitochondrial file")
+                        st.session_state.mito_data = None
+                    else:
+                        mito_df['Gene_ID'] = mito_df['Name'].str.split('/').str[0].str.strip()
+                        mito_df = mito_df[['Gene_ID', '% 1x']].copy()
+                        mito_df['% 1x'] = pd.to_numeric(mito_df['% 1x'], errors='coerce').round(2)
+                        
+                        st.session_state.mito_data = mito_df
+                        st.success(f"✅ Loaded {len(mito_df)} mitochondrial genes")
+            except Exception as e:
+                st.error(f"❌ Error loading mitochondrial file: {str(e)}")
+                st.session_state.mito_data = None
+        else:
+            st.session_state.mito_data = None
 
 with col2:
     st.subheader("Step 2B: Panel Genes")
@@ -373,74 +416,33 @@ if st.session_state.coverage_data is not None and st.session_state.panel_genes:
     
     st.divider()
     
-    # Mitochondrial Data Option
-    st.subheader("📋 Word Document Generation")
-    include_mito = st.checkbox("Include Mitochondrial Data", value=False)
-    
-    mito_data = None
-    if include_mito:
-        st.info("Upload mitochondrial coverage file to merge with panel genes")
-        mito_file = st.file_uploader(
-            "Upload Mitochondrial Excel File",
-            type=['xlsx', 'xls'],
-            key='mito_file',
-            help="Excel file with mitochondrial gene coverage (header in row 2)"
-        )
-        
-        if mito_file:
-            try:
-                # Load mito file with header in row 2 (skip first row)
-                mito_df = pd.read_excel(mito_file, header=1)
-                
-                # Find %1x column
-                mito_cols = [c for c in mito_df.columns if '1x' in c.lower()]
-                if not mito_cols:
-                    st.error("❌ No coverage column found in mitochondrial file")
-                else:
-                    mito_percent_col = mito_cols[0]
-                    mito_df.rename(columns={mito_percent_col: '% 1x'}, inplace=True)
-                    
-                    # Extract gene names from Name column (before '/')
-                    mito_df['Gene_ID'] = mito_df['Name'].str.split('/').str[0].str.strip()
-                    mito_df = mito_df[['Gene_ID', '% 1x']].copy()
-                    mito_df['% 1x'] = pd.to_numeric(mito_df['% 1x'], errors='coerce').round(2)
-                    
-                    mito_data = mito_df
-                    st.success(f"✅ Loaded {len(mito_df)} mitochondrial genes")
-            except Exception as e:
-                st.error(f"❌ Error loading mitochondrial file: {str(e)}")
-    
-    st.divider()
-    
     col1, col2 = st.columns(2)
     
     with col1:
-        # Determine if we can generate Word document
-        can_generate = True
-        if include_mito and mito_data is None:
-            can_generate = False
-            st.warning("⚠️ Please upload mitochondrial file first")
-        
-        if st.button("📄 Generate Word", type="primary", use_container_width=True, disabled=not can_generate):
+        if st.button("📄 Generate Word", type="primary", use_container_width=True):
             with st.spinner("Creating..."):
                 try:
+                    # Check if mito data exists
+                    has_mito = 'mito_data' in st.session_state and st.session_state.mito_data is not None
+                    
                     # Prepare final dataset
-                    if include_mito and mito_data is not None:
+                    if has_mito:
                         # Combine with mito data
                         df_final = pd.concat([
                             df_grouped.sort_values('Gene_ID'),
-                            mito_data
+                            st.session_state.mito_data
                         ], ignore_index=True)
                         
                         # Remove duplicates (keep first occurrence - panel genes take precedence)
                         df_final = df_final.drop_duplicates(subset='Gene_ID', keep='first')
                         
-                        st.info(f"📊 Combined: {len(df_grouped)} panel genes + {len(mito_data)} mito genes = {len(df_final)} total")
+                        st.info(f"📊 Combined: {len(df_grouped)} panel genes + {len(st.session_state.mito_data)} mito genes = {len(df_final)} total")
                     else:
-                        df_final = df_grouped
+                        df_final = df_grouped.copy()
                     
                     # Rename column for consistency
-                    df_final = df_final.rename(columns={'Perc_1x': '% 1x'})
+                    if 'Perc_1x' in df_final.columns:
+                        df_final = df_final.rename(columns={'Perc_1x': '% 1x'})
                     
                     word_filename = f"{st.session_state.file_basename}_report.docx"
                     doc = create_word_document_with_mito(df_final, word_filename)
