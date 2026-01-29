@@ -470,6 +470,7 @@ if st.session_state.coverage_data is not None and st.session_state.panel_genes:
     
     col1, col2 = st.columns(2)
     
+
     with col1:
         if st.button("📄 Generate Word", type="primary", use_container_width=True):
             with st.spinner("Creating..."):
@@ -479,22 +480,45 @@ if st.session_state.coverage_data is not None and st.session_state.panel_genes:
                     
                     # Prepare final dataset
                     if has_mito:
-                        # Combine with mito data
+                        # CRITICAL FIX: Rename panel genes column BEFORE concatenating
+                        # df_grouped has column 'Perc_1x'
+                        # mito_data has column '% 1x'
+                        # They must match before concat!
+                        
+                        df_panel = df_grouped.copy()
+                        df_panel = df_panel.rename(columns={'Perc_1x': '% 1x'})
+                        df_panel = df_panel.sort_values('Gene_ID')
+                        
+                        # DEBUG: Verify column names match
+                        st.write("DEBUG - Panel columns:", df_panel.columns.tolist())
+                        st.write("DEBUG - Mito columns:", st.session_state.mito_data.columns.tolist())
+                        
+                        # Now both dataframes have the same column name: '% 1x'
                         df_final = pd.concat([
-                            df_grouped.sort_values('Gene_ID'),
+                            df_panel,
                             st.session_state.mito_data
                         ], ignore_index=True)
+                        
+                        # DEBUG: Check after concat
+                        st.write("DEBUG - After concat columns:", df_final.columns.tolist())
+                        st.write("DEBUG - Sample after concat:")
+                        st.write(df_final.head(10))
+                        st.write(f"DEBUG - NaN count in % 1x: {df_final['% 1x'].isna().sum()}")
                         
                         # Remove duplicates (keep first occurrence - panel genes take precedence)
                         df_final = df_final.drop_duplicates(subset='Gene_ID', keep='first')
                         
-                        st.info(f"📊 Combined: {len(df_grouped)} panel genes + {len(st.session_state.mito_data)} mito genes = {len(df_final)} total")
+                        st.info(f"📊 Combined: {len(df_panel)} panel genes + {len(st.session_state.mito_data)} mito genes = {len(df_final)} total")
                     else:
+                        # No mito data - just use panel data
                         df_final = df_grouped.copy()
-                    
-                    # Rename column for consistency
-                    if 'Perc_1x' in df_final.columns:
                         df_final = df_final.rename(columns={'Perc_1x': '% 1x'})
+                    
+                    # Verify the final dataframe
+                    st.write("DEBUG - Final columns:", df_final.columns.tolist())
+                    st.write("DEBUG - Final data types:", df_final.dtypes.to_dict())
+                    st.write("DEBUG - Sample final data:")
+                    st.write(df_final.head())
                     
                     word_filename = f"{st.session_state.file_basename}_report.docx"
                     doc = create_word_document_with_mito(df_final, word_filename)
