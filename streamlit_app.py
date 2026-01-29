@@ -348,7 +348,8 @@ with col1:
                     st.session_state.mito_data = None
                 else:
                     mito_percent_col = mito_cols[0]
-
+                    st.write(f"DEBUG - Using column: '{mito_percent_col}'")
+                    
                     # Rename to standard name
                     mito_df = mito_df.rename(columns={mito_percent_col: '% 1x'})
                     
@@ -483,6 +484,7 @@ if st.session_state.coverage_data is not None and st.session_state.panel_genes:
                         df_panel = df_panel.rename(columns={'Perc_1x': '% 1x'})
                         df_panel = df_panel.sort_values('Gene_ID')
                         
+                        # DEBUG: Verify column names match
                         
                         # Now both dataframes have the same column name: '% 1x'
                         df_final = pd.concat([
